@@ -49,6 +49,30 @@ defmodule LanShare.Router do
     end
   end
 
+  get "/r/:code/qrcode.svg" do
+    case LanShare.Room.normalize(code) do
+      nil ->
+        conn
+        |> put_resp_content_type("text/plain")
+        |> send_resp(400, "无效房间码")
+
+      room_code ->
+        room_url = absolute_room_url(conn, room_code)
+
+        case LanShare.RoomQRCode.svg(room_url) do
+          {:ok, svg} ->
+            conn
+            |> put_resp_content_type("image/svg+xml")
+            |> send_resp(200, svg)
+
+          {:error, reason} ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(500, Jason.encode!(%{error: reason}))
+        end
+    end
+  end
+
   get "/room/new" do
     conn
     |> put_resp_header("location", LanShare.Room.path(LanShare.Room.generate()))
@@ -100,5 +124,15 @@ defmodule LanShare.Router do
   # 404
   match _ do
     send_resp(conn, 404, "Not Found")
+  end
+
+  defp absolute_room_url(conn, room_code) do
+    scheme = Atom.to_string(conn.scheme)
+    host = conn.host
+    port = conn.port
+    default_port? = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    authority = if default_port?, do: host, else: "#{host}:#{port}"
+
+    scheme <> "://" <> authority <> LanShare.Room.path(room_code)
   end
 end

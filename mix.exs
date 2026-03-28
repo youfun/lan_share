@@ -24,7 +24,8 @@ defmodule LanShare.MixProject do
       {:plug, "~> 1.16"},
       {:jason, "~> 1.4"},
       {:earmark, "~> 1.4"},
-      {:html_sanitize_ex, "~> 1.4"}
+      {:html_sanitize_ex, "~> 1.4"},
+      {:qr_code, "~> 3.2"}
     ]
   end
 end

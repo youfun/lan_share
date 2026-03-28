@@ -18,21 +18,211 @@ defmodule LanShare.Page do
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>LanShare - 局域网共享</title>
       <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23075e54'/%3E%3Ccircle cx='22' cy='22' r='8' fill='white'/%3E%3Ccircle cx='42' cy='22' r='8' fill='white' fill-opacity='.82'/%3E%3Ccircle cx='32' cy='42' r='8' fill='white' fill-opacity='.92'/%3E%3C/svg%3E">
-      <script src="https://cdn.tailwindcss.com"></script>
-      <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
-      <script>
-        tailwind.config = {
-          theme: {
-            extend: {
-              colors: {
-                brand: { DEFAULT: '#075e54', light: '#128c7e', bubble: '#dcf8c6' }
-              }
-            }
-          }
-        }
-      </script>
       <style>
-        /* 仅 Tailwind 无法直接表达的状态类 */
+        :root {
+          --brand: #075e54;
+          --brand-light: #128c7e;
+          --bubble-mine: #dcf8c6;
+          --bg-app: #f3f4f6;
+          --text-strong: #1f2937;
+          --text-muted: #6b7280;
+          --border-soft: #d1d5db;
+          --border-faint: #e5e7eb;
+          --overlay-soft: rgba(0, 0, 0, 0.3);
+          --overlay-medium: rgba(0, 0, 0, 0.5);
+          --overlay-strong: rgba(0, 0, 0, 0.85);
+          --success: #22c55e;
+          --danger: #ef4444;
+          --warning: #eab308;
+        }
+
+        * { box-sizing: border-box; }
+
+        html, body {
+          margin: 0;
+          height: 100%;
+        }
+
+        body {
+          background: var(--bg-app);
+          color: var(--text-strong);
+          display: flex;
+          flex-direction: column;
+          font-family: "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+          overflow: hidden;
+        }
+
+        button, input, textarea {
+          font: inherit;
+        }
+
+        a {
+          color: inherit;
+          text-decoration: none;
+        }
+
+        .hidden { display: none !important; }
+        .flex { display: flex; }
+        .block { display: block; }
+        .flex-col { flex-direction: column; }
+        .flex-1 { flex: 1 1 auto; }
+        .flex-shrink-0 { flex-shrink: 0; }
+        .flex-wrap { flex-wrap: wrap; }
+        .items-center { align-items: center; }
+        .items-start { align-items: flex-start; }
+        .items-end { align-items: flex-end; }
+        .justify-between { justify-content: space-between; }
+        .justify-center { justify-content: center; }
+        .justify-end { justify-content: flex-end; }
+        .justify-start { justify-content: flex-start; }
+        .self-center { align-self: center; }
+        .gap-2 { gap: 0.5rem; }
+        .gap-3 { gap: 0.75rem; }
+        .min-h-0 { min-height: 0; }
+        .min-h-64 { min-height: 16rem; }
+        .h-screen { height: 100vh; }
+        .h-10 { height: 2.5rem; }
+        .h-2 { height: 0.5rem; }
+        .h-64 { height: 16rem; }
+        .w-10 { width: 2.5rem; }
+        .w-2 { width: 0.5rem; }
+        .w-64 { width: 16rem; }
+        .w-full { width: 100%; }
+        .max-w-full { max-width: 100%; }
+        .max-w-sm { max-width: 24rem; }
+        .max-h-28 { max-height: 7rem; }
+        .overflow-hidden { overflow: hidden; }
+        .overflow-y-auto { overflow-y: auto; }
+        .resize-none { resize: none; }
+        .cursor-pointer { cursor: pointer; }
+        .rounded-full { border-radius: 999px; }
+        .rounded-lg { border-radius: 0.75rem; }
+        .rounded-xl { border-radius: 1rem; }
+        .rounded-2xl { border-radius: 1.25rem; }
+        .rounded-3xl { border-radius: 1.5rem; }
+        .border { border: 1px solid var(--border-soft); }
+        .border-t { border-top: 1px solid var(--border-faint); }
+        .border-b { border-bottom: 1px solid var(--border-faint); }
+        .border-gray-200 { border-color: var(--border-faint); }
+        .border-gray-300 { border-color: var(--border-soft); }
+        .border-brand { border-color: var(--brand); }
+        .bg-white { background: #fff; }
+        .bg-gray-50 { background: #f9fafb; }
+        .bg-gray-100 { background: var(--bg-app); }
+        .bg-gray-900 { background: #111827; }
+        .bg-black { background: #000; }
+        .bg-brand { background: var(--brand); }
+        .bg-brand-light { background: var(--brand-light); }
+        .bg-green-500 { background: var(--success); }
+        .bg-red-500 { background: var(--danger); }
+        .bg-yellow-500 { background: var(--warning); }
+        .bg-green-400 { background: #4ade80; }
+        .text-white { color: #fff; }
+        .text-brand { color: var(--brand); }
+        .text-gray-400 { color: #9ca3af; }
+        .text-gray-500 { color: var(--text-muted); }
+        .text-gray-600 { color: #4b5563; }
+        .text-gray-700 { color: #374151; }
+        .text-gray-800 { color: var(--text-strong); }
+        .text-gray-900 { color: #111827; }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .text-xs { font-size: 0.75rem; }
+        .text-sm { font-size: 0.875rem; }
+        .text-base { font-size: 1rem; }
+        .text-lg { font-size: 1.125rem; }
+        .text-xl { font-size: 1.25rem; }
+        .text-2xl { font-size: 1.5rem; }
+        .font-medium { font-weight: 500; }
+        .font-semibold { font-weight: 600; }
+        .uppercase { text-transform: uppercase; }
+        .leading-none { line-height: 1; }
+        .leading-relaxed { line-height: 1.65; }
+        .outline-none { outline: none; }
+        .break-words { overflow-wrap: anywhere; }
+        .truncate {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .object-contain { object-fit: contain; }
+        .shadow-sm { box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08); }
+        .shadow-md { box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12); }
+        .shadow-2xl { box-shadow: 0 28px 64px rgba(15, 23, 42, 0.22); }
+        .transition-colors { transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease; }
+        .transition-opacity { transition: opacity 0.18s ease; }
+        .duration-300 { transition-duration: 0.3s; }
+        .fixed { position: fixed; }
+        .top-0 { top: 0; }
+        .right-0 { right: 0; }
+        .bottom-0 { bottom: 0; }
+        .inset-0 { inset: 0; }
+        .z-40 { z-index: 40; }
+        .z-50 { z-index: 50; }
+        .font-sans { font-family: inherit; }
+        .divide-y > * + * { border-top: 1px solid #f3f4f6; }
+
+        [class~="max-w-[95vw]"] { max-width: 95vw; }
+        [class~="max-h-[95vh]"] { max-height: 95vh; }
+        [class~="max-w-[75%]"] { max-width: 75%; }
+        [class~="max-h-72"] { max-height: 18rem; }
+        [class~="bg-[#dcf8c6]"] { background: var(--bubble-mine); }
+        [class~="bg-white/20"] { background: rgba(255, 255, 255, 0.2); }
+        [class~="bg-white/30"] { background: rgba(255, 255, 255, 0.3); }
+        [class~="bg-white/10"] { background: rgba(255, 255, 255, 0.1); }
+        [class~="bg-brand/5"] { background: rgba(7, 94, 84, 0.05); }
+        [class~="bg-black/5"] { background: rgba(0, 0, 0, 0.05); }
+        [class~="bg-black/30"] { background: var(--overlay-soft); }
+        [class~="bg-black/50"] { background: var(--overlay-medium); }
+        [class~="bg-black/85"] { background: var(--overlay-strong); }
+        [class~="text-white/80"] { color: rgba(255, 255, 255, 0.8); }
+        [class~="tracking-[0.2em]"] { letter-spacing: 0.2em; }
+        [class~="tracking-[0.3em]"] { letter-spacing: 0.3em; }
+        [class~="text-[10px]"] { font-size: 10px; }
+        [class~="py-0.5"] { padding-top: 0.125rem; padding-bottom: 0.125rem; }
+        [class~="py-1"] { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+        [class~="py-2"] { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+        [class~="py-2.5"] { padding-top: 0.625rem; padding-bottom: 0.625rem; }
+        [class~="py-3"] { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+        [class~="py-3.5"] { padding-top: 0.875rem; padding-bottom: 0.875rem; }
+        [class~="px-2"] { padding-left: 0.5rem; padding-right: 0.5rem; }
+        [class~="px-3"] { padding-left: 0.75rem; padding-right: 0.75rem; }
+        [class~="px-4"] { padding-left: 1rem; padding-right: 1rem; }
+        [class~="p-2"] { padding: 0.5rem; }
+        [class~="p-4"] { padding: 1rem; }
+        [class~="p-6"] { padding: 1.5rem; }
+        [class~="mt-1"] { margin-top: 0.25rem; }
+        [class~="mt-2"] { margin-top: 0.5rem; }
+        [class~="mt-4"] { margin-top: 1rem; }
+        [class~="mb-0.5"] { margin-bottom: 0.125rem; }
+        [class~="mb-1"] { margin-bottom: 0.25rem; }
+
+        [class~="hover:bg-brand-light"]:hover { background: var(--brand-light); }
+        [class~="hover:bg-white/30"]:hover { background: rgba(255, 255, 255, 0.3); }
+        [class~="active:bg-white/10"]:active { background: rgba(255, 255, 255, 0.1); }
+        [class~="hover:bg-brand/5"]:hover { background: rgba(7, 94, 84, 0.05); }
+        [class~="hover:bg-gray-50"]:hover { background: #f9fafb; }
+        [class~="hover:bg-gray-200"]:hover { background: #e5e7eb; }
+        [class~="active:bg-gray-300"]:active { background: #d1d5db; }
+        [class~="hover:bg-black"]:hover { background: #000; }
+        [class~="hover:bg-black/5"]:hover { background: rgba(0, 0, 0, 0.05); }
+        [class~="hover:text-white"]:hover { color: #fff; }
+        [class~="hover:text-gray-700"]:hover { color: #374151; }
+        [class~="hover:opacity-90"]:hover { opacity: 0.9; }
+        [class~="active:opacity-75"]:active { opacity: 0.75; }
+
+        [class~="focus:border-brand"]:focus {
+          border-color: var(--brand);
+        }
+
+        [class~="z-[180]"] { z-index: 180; }
+        [class~="z-[200]"] { z-index: 200; }
+
+        @media (min-width: 640px) {
+          [class~="sm:flex-row"] { flex-direction: row; }
+          [class~="sm:text-left"] { text-align: left; }
+        }
+
         #sidebar { transform: translateX(100%); transition: transform 0.2s ease; }
         #sidebar.open { transform: translateX(0); }
         #overlay { display: none; }
@@ -372,7 +562,6 @@ defmodule LanShare.Page do
         }
 
         function renderQrCode() {
-          const url = document.getElementById('shareLink').value;
           const image = document.getElementById('roomQrImage');
           const placeholder = document.getElementById('roomQrPlaceholder');
 
@@ -380,29 +569,17 @@ defmodule LanShare.Page do
           placeholder.classList.remove('hidden');
           image.classList.add('hidden');
 
-          if (!window.QRCode) {
-            placeholder.textContent = '二维码库加载失败';
-            return;
-          }
-
-          QRCode.toDataURL(url, {
-            errorCorrectionLevel: 'M',
-            margin: 1,
-            width: 240,
-            color: {
-              dark: '#075e54',
-              light: '#ffffff'
-            }
-          }, (error, dataUrl) => {
-            if (error) {
-              placeholder.textContent = '二维码生成失败';
-              return;
-            }
-
-            image.src = dataUrl;
+          image.onload = () => {
             image.classList.remove('hidden');
             placeholder.classList.add('hidden');
-          });
+          };
+
+          image.onerror = () => {
+            placeholder.textContent = '二维码生成失败';
+            image.classList.add('hidden');
+          };
+
+          image.src = currentRoomCode ? LanShareRoom.qrcodePath(currentRoomCode) : '';
         }
 
         async function copyShareLink() {
@@ -526,6 +703,12 @@ defmodule LanShare.Page do
           if (ws && ws.readyState === WebSocket.OPEN)
             ws.send(JSON.stringify({ type: 'ping' }));
         }, 30000);
+
+        const LanShareRoom = {
+          qrcodePath(roomCode) {
+            return `/r/${roomCode}/qrcode.svg`;
+          }
+        };
 
         syncRoomUi();
         connect();

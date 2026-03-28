@@ -28,6 +28,14 @@ defmodule LanShare.RouterTest do
     assert conn.resp_body =~ "无效房间码"
   end
 
+  test "GET /r/:code/qrcode.svg returns svg" do
+    conn = conn(:get, "/r/ab12/qrcode.svg") |> Map.put(:host, "127.0.0.1") |> Router.call([])
+
+    assert conn.status == 200
+    assert get_resp_header(conn, "content-type") == ["image/svg+xml; charset=utf-8"]
+    assert conn.resp_body =~ "<svg"
+  end
+
   test "POST /join redirects to normalized room path" do
     conn = conn(:post, "/join", %{code: "x9y2"}) |> Router.call([])
 

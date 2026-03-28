@@ -32,6 +32,8 @@ defmodule LanShare.Room do
   def path(nil), do: "/"
   def path(code), do: "/r/" <> normalize!(code)
 
+  def qrcode_path(code), do: path(code) <> "/qrcode.svg"
+
   def normalize!(code) do
     case normalize(code) do
       nil -> raise ArgumentError, "invalid room code"

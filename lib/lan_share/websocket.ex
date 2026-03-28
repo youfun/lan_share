@@ -99,6 +99,18 @@ defmodule LanShare.WebSocket do
 
         {:ok, state}
 
+      {:ok, %{"type" => "file", "id" => file_id}} ->
+        case build_file_message(file_id, state) do
+          {:ok, msg} ->
+            LanShare.MessageStore.push(state.room_code, msg)
+            LanShare.DeviceRegistry.broadcast(state.room_code, msg)
+
+          :error ->
+            :ok
+        end
+
+        {:ok, state}
+
       {:ok, %{"type" => "ping"}} ->
         pong = Jason.encode!(%{type: "pong"})
         {[{:text, pong}], state}
@@ -152,4 +164,27 @@ defmodule LanShare.WebSocket do
   end
 
   defp sanitize_filename(_), do: "image"
+
+  defp build_file_message(_file_id, %{room_code: nil}), do: :error
+
+  defp build_file_message(file_id, state) do
+    case LanShare.FileStore.lookup(file_id) do
+      {:ok, metadata} when metadata.room_code == state.room_code ->
+        {:ok,
+         %{
+           type: "file",
+           id: metadata.id,
+           filename: metadata.filename,
+           size: metadata.size,
+           content_type: metadata.content_type,
+           download_url: LanShare.FileStore.download_url(metadata.id, metadata.room_code),
+           sender: state.device_name,
+           timestamp: now_iso(),
+           room_code: metadata.room_code
+         }}
+
+      _ ->
+        :error
+    end
+  end
 end

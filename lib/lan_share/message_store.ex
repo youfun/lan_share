@@ -21,6 +21,11 @@ defmodule LanShare.MessageStore do
     GenServer.call(__MODULE__, {:get_history, room_code})
   end
 
+  @doc "清空所有消息历史"
+  def reset do
+    GenServer.call(__MODULE__, :reset)
+  end
+
   # --- 回调 ---
 
   @impl true
@@ -43,5 +48,10 @@ defmodule LanShare.MessageStore do
   def handle_call({:get_history, room_code}, _from, state) do
     history = state |> Map.get(room_code, []) |> Enum.reverse()
     {:reply, history, state}
+  end
+
+  @impl true
+  def handle_call(:reset, _from, _state) do
+    {:reply, :ok, %{}}
   end
 end

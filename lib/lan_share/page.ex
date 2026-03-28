@@ -349,13 +349,21 @@ defmodule LanShare.Page do
 
       <!-- 输入区 -->
       <footer class="bg-white border-t border-gray-200 px-4 py-2.5 flex gap-2 items-end flex-shrink-0">
-        <button onclick="document.getElementById('fileInput').click()"
+        <button id="imageSendButton"
+                onclick="document.getElementById('imageInput').click()"
                 class="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 active:bg-gray-300
-                       flex items-center justify-center text-xl flex-shrink-0 transition-colors">
+                        flex items-center justify-center text-xl flex-shrink-0 transition-colors">
           &#128247;
         </button>
-        <input type="file" id="fileInput" class="hidden" accept="image/*"
-               onchange="handleImageSelect(event)">
+        <input type="file" id="imageInput" class="hidden" accept="image/*"
+                onchange="handleImageSelect(event)">
+        <button id="fileSendButton"
+                onclick="document.getElementById('transferFileInput').click()"
+                class="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 active:bg-gray-300
+                       flex items-center justify-center text-xl flex-shrink-0 transition-colors">
+          &#128206;
+        </button>
+        <input type="file" id="transferFileInput" class="hidden" onchange="handleFileSelect(event)">
         <textarea id="textInput" rows="1"
                   placeholder="输入消息… (Shift+Enter 换行)"
                   onkeydown="handleKeyDown(event)"
@@ -408,6 +416,9 @@ defmodule LanShare.Page do
         let currentRoomCode = #{Jason.encode!(room_code)};
         let reconnectTimer;
         let shouldStickToBottom = true;
+        let nextLocalUploadId = 1;
+
+        const localFileUploads = new Map();
 
         const messagesEl = document.getElementById('messages');
 
@@ -454,6 +465,11 @@ defmodule LanShare.Page do
               break;
             case 'history':
               msg.messages.forEach(m => renderMessage(m));
+              scrollToBottom();
+              break;
+            case 'file':
+              resolveLocalFileUpload(msg.id);
+              renderMessage(msg);
               scrollToBottom();
               break;
             case 'text':
@@ -505,6 +521,34 @@ defmodule LanShare.Page do
                    class="max-w-full max-h-72 rounded-lg cursor-pointer hover:opacity-90 transition-opacity block">
               <p class="text-[10px] text-gray-400 text-right mt-1">${formatTime(msg.timestamp)}</p>
             `;
+          } else if (msg.type === 'file') {
+            bubble.innerHTML = `
+              ${!isMine ? `<p class="text-xs font-semibold text-brand mb-1">${escapeHtml(msg.sender)}</p>` : ''}
+              <div class="flex items-start gap-2">
+                <div class="w-10 h-10 rounded-lg bg-white/30 flex items-center justify-center text-lg flex-shrink-0">&#128206;</div>
+                <div class="flex-1 break-words">
+                  <p class="font-medium">${escapeHtml(msg.filename)}</p>
+                  <p class="text-xs text-gray-500 mt-1">${formatFileSize(msg.size)} · ${escapeHtml(msg.content_type || 'application/octet-stream')}</p>
+                </div>
+              </div>
+              <div class="mt-2 flex items-center justify-between gap-2 text-[10px] text-gray-400">
+                <span>${formatTime(msg.timestamp)}</span>
+                <button type="button"
+                        data-download-url="${escapeAttribute(msg.download_url)}"
+                        data-download-filename="${escapeAttribute(msg.filename)}"
+                        class="download-file rounded-full border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-black/5 transition-colors">
+                  下载文件
+                </button>
+              </div>
+            `;
+
+            bubble.querySelector('.download-file').addEventListener('click', event => {
+              startFileDownload(
+                event.currentTarget.dataset.downloadUrl,
+                event.currentTarget.dataset.downloadFilename,
+                event.currentTarget
+              );
+            });
           }
 
           wrap.appendChild(bubble);
@@ -617,6 +661,67 @@ defmodule LanShare.Page do
           }, 1200);
         }
 
+        function createLocalFileUpload(file) {
+          const localId = String(nextLocalUploadId++);
+          const wrap = document.createElement('div');
+          wrap.className = 'flex justify-end';
+
+          const bubble = document.createElement('div');
+          bubble.className = 'max-w-[75%] rounded-xl px-3 py-2 text-sm leading-relaxed break-words shadow-sm bg-[#dcf8c6] text-gray-800';
+          bubble.innerHTML = `
+            <div class="flex items-start gap-2">
+              <div class="w-10 h-10 rounded-lg bg-white/30 flex items-center justify-center text-lg flex-shrink-0">&#128206;</div>
+              <div class="flex-1 break-words">
+                <p class="font-medium">${escapeHtml(file.name || '未命名文件')}</p>
+                <p class="text-xs text-gray-500 mt-1">${formatFileSize(file.size)}</p>
+              </div>
+            </div>
+            <div class="mt-2 flex items-center justify-between gap-2 text-[10px] text-gray-400">
+              <span class="upload-status">正在上传...</span>
+              <button type="button"
+                      class="retry-upload hidden rounded-full border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-black/5 transition-colors">
+                重试
+              </button>
+            </div>
+          `;
+
+          wrap.appendChild(bubble);
+          messagesEl.appendChild(wrap);
+
+          const upload = {
+            id: localId,
+            file,
+            fileKey: fileFingerprint(file),
+            el: wrap,
+            statusEl: bubble.querySelector('.upload-status'),
+            retryButton: bubble.querySelector('.retry-upload'),
+            inFlight: false,
+            uploadedMeta: null,
+            serverId: null
+          };
+
+          upload.retryButton.addEventListener('click', () => retryLocalFileUpload(localId));
+          localFileUploads.set(localId, upload);
+          scrollToBottom();
+
+          return upload;
+        }
+
+        async function retryLocalFileUpload(localId) {
+          const upload = localFileUploads.get(localId);
+          if (!upload || upload.inFlight) return;
+
+          if (upload.uploadedMeta) {
+            try {
+              sendUploadedFileMessage(upload, upload.uploadedMeta);
+            } catch (error) {
+              markFileUploadFailed(upload, error.message || '文件发送失败');
+            }
+          } else {
+            await startFileUpload(upload);
+          }
+        }
+
         /* ── 发送 ── */
         function sendText() {
           const input = document.getElementById('textInput');
@@ -644,6 +749,123 @@ defmodule LanShare.Page do
           };
           reader.readAsDataURL(file);
           event.target.value = '';
+        }
+
+        async function handleFileSelect(event) {
+          const file = event.target.files[0];
+          event.target.value = '';
+          if (!file) return;
+
+          if (!currentRoomCode) {
+            alert('请先加入房间，再发送文件');
+            return;
+          }
+
+          if (file.size > 1024 * 1024 * 1024) {
+            alert('文件大小不能超过 1GB');
+            return;
+          }
+
+          if (findInFlightUpload(file)) {
+            return;
+          }
+
+          const upload = createLocalFileUpload(file);
+          await startFileUpload(upload);
+        }
+
+        async function startFileUpload(upload) {
+          upload.inFlight = true;
+          upload.retryButton.classList.add('hidden');
+          upload.statusEl.textContent = '正在上传...';
+          setFileUploadButtonState(hasInFlightUpload());
+
+          const formData = new FormData();
+          formData.append('room', currentRoomCode);
+          formData.append('file', upload.file);
+
+          try {
+            const response = await fetch('/upload/file', {
+              method: 'POST',
+              body: formData
+            });
+
+            let payload = {};
+
+            try {
+              payload = await response.json();
+            } catch (_error) {
+              payload = {};
+            }
+
+            if (!response.ok) {
+              throw new Error(payload.error || '文件上传失败');
+            }
+
+            upload.uploadedMeta = payload;
+            upload.serverId = payload.id;
+            sendUploadedFileMessage(upload, payload);
+          } catch (error) {
+            markFileUploadFailed(upload, error.message || '文件上传失败');
+          } finally {
+            upload.inFlight = false;
+            setFileUploadButtonState(hasInFlightUpload());
+          }
+        }
+
+        function sendUploadedFileMessage(upload, metadata) {
+          if (!ws || ws.readyState !== WebSocket.OPEN) {
+            throw new Error('上传已完成，但消息发送失败，请重试');
+          }
+
+          upload.statusEl.textContent = '上传完成，正在发送...';
+          upload.retryButton.classList.add('hidden');
+          upload.serverId = metadata.id;
+
+          ws.send(JSON.stringify({
+            type: 'file',
+            id: metadata.id,
+            filename: metadata.filename,
+            size: metadata.size,
+            content_type: metadata.content_type,
+            download_url: metadata.download_url
+          }));
+        }
+
+        function resolveLocalFileUpload(fileId) {
+          for (const upload of localFileUploads.values()) {
+            if (upload.serverId === fileId) {
+              upload.el.remove();
+              localFileUploads.delete(upload.id);
+              break;
+            }
+          }
+        }
+
+        function markFileUploadFailed(upload, message) {
+          upload.inFlight = false;
+          upload.statusEl.textContent = message;
+          upload.retryButton.classList.remove('hidden');
+          setFileUploadButtonState(hasInFlightUpload());
+        }
+
+        function hasInFlightUpload() {
+          return Array.from(localFileUploads.values()).some(upload => upload.inFlight);
+        }
+
+        function findInFlightUpload(file) {
+          const key = fileFingerprint(file);
+          return Array.from(localFileUploads.values()).find(upload => upload.inFlight && upload.fileKey === key);
+        }
+
+        function fileFingerprint(file) {
+          return [file.name, file.size, file.lastModified].join(':');
+        }
+
+        function setFileUploadButtonState(disabled) {
+          const button = document.getElementById('fileSendButton');
+          button.disabled = disabled;
+          button.classList.toggle('opacity-50', disabled);
         }
 
         function handleKeyDown(event) {
@@ -688,6 +910,10 @@ defmodule LanShare.Page do
           return d.innerHTML;
         }
 
+        function escapeAttribute(text) {
+          return escapeHtml(text || '');
+        }
+
         // 仅作为旧消息的后备渲染，正常文本消息优先使用服务端生成的 Markdown HTML
         function renderText(text) {
           return escapeHtml(text).replaceAll(String.fromCharCode(10), '<br>');
@@ -696,6 +922,40 @@ defmodule LanShare.Page do
         function formatTime(iso) {
           if (!iso) return '';
           return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function formatFileSize(bytes) {
+          if (!Number.isFinite(bytes) || bytes < 0) return '未知大小';
+          if (bytes < 1024) return `${bytes} B`;
+
+          const units = ['KB', 'MB', 'GB', 'TB'];
+          let value = bytes / 1024;
+          let unitIndex = 0;
+
+          while (value >= 1024 && unitIndex < units.length - 1) {
+            value /= 1024;
+            unitIndex += 1;
+          }
+
+          return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+        }
+
+        function startFileDownload(downloadUrl, filename, button) {
+          const originalText = button.textContent;
+          const link = document.createElement('a');
+          link.href = downloadUrl;
+          link.download = filename;
+          link.rel = 'noopener';
+          link.target = '_blank';
+
+          button.textContent = '处理中...';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+
+          window.setTimeout(() => {
+            button.textContent = originalText;
+          }, 800);
         }
 
         // 心跳

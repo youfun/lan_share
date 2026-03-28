@@ -13,6 +13,8 @@ defmodule LanShare.Application do
       LanShare.DeviceRegistry,
       # 消息历史 - 保留最近消息供新设备加入时查看
       LanShare.MessageStore,
+      # 文件存储 - 管理文件上传与下载索引
+      LanShare.FileStore,
       # HTTP 服务器
       {Plug.Cowboy,
        scheme: :http, plug: LanShare.Router, options: [port: port, dispatch: dispatch()]}

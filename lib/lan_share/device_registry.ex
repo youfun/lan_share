@@ -1,7 +1,7 @@
 defmodule LanShare.DeviceRegistry do
   @moduledoc """
   跟踪当前在线的设备。
-  每个 WebSocket 连接注册为一个设备，断开时自动移除。
+  每个 WebSocket 连接注册为一个设备，按房间隔离，断开时自动移除。
   """
   use GenServer
 
@@ -12,8 +12,8 @@ defmodule LanShare.DeviceRegistry do
   end
 
   @doc "注册设备，pid 为 WebSocket 进程"
-  def register(pid, device_name) do
-    GenServer.call(__MODULE__, {:register, pid, device_name})
+  def register(pid, device_name, room_code) do
+    GenServer.call(__MODULE__, {:register, pid, device_name, room_code})
   end
 
   @doc "注销设备"
@@ -21,19 +21,14 @@ defmodule LanShare.DeviceRegistry do
     GenServer.call(__MODULE__, {:unregister, pid})
   end
 
-  @doc "获取所有在线设备列表 [{pid, device_name}]"
-  def list_devices do
-    GenServer.call(__MODULE__, :list)
+  @doc "获取指定房间的在线设备名列表"
+  def list_devices(room_code \\ nil) do
+    GenServer.call(__MODULE__, {:list, room_code})
   end
 
-  @doc "向所有在线设备广播消息"
-  def broadcast(message) do
-    GenServer.cast(__MODULE__, {:broadcast, message})
-  end
-
-  @doc "向除 sender 外的所有设备广播"
-  def broadcast(message, exclude_pid) do
-    GenServer.cast(__MODULE__, {:broadcast, message, exclude_pid})
+  @doc "向房间内在线设备广播消息"
+  def broadcast(room_code, message, exclude_pid \\ nil) do
+    GenServer.cast(__MODULE__, {:broadcast, room_code, message, exclude_pid})
   end
 
   # --- 回调 ---
@@ -44,59 +39,59 @@ defmodule LanShare.DeviceRegistry do
   end
 
   @impl true
-  def handle_call({:register, pid, device_name}, _from, devices) do
+  def handle_call({:register, pid, device_name, room_code}, _from, devices) do
     Process.monitor(pid)
-    devices = Map.put(devices, pid, device_name)
+    devices = Map.put(devices, pid, %{name: device_name, room_code: room_code})
     {:reply, :ok, devices}
   end
 
   @impl true
   def handle_call({:unregister, pid}, _from, devices) do
-    devices = Map.delete(devices, pid)
-    {:reply, :ok, devices}
+    {:reply, :ok, Map.delete(devices, pid)}
   end
 
   @impl true
-  def handle_call(:list, _from, devices) do
-    list = Enum.map(devices, fn {_pid, name} -> name end)
-    {:reply, list, devices}
+  def handle_call({:list, room_code}, _from, devices) do
+    {:reply, list_device_names(devices, room_code), devices}
   end
 
   @impl true
-  def handle_cast({:broadcast, message}, devices) do
+  def handle_cast({:broadcast, room_code, message, exclude_pid}, devices) do
     encoded = Jason.encode!(message)
-    for {pid, _name} <- devices do
+
+    for {pid, device} <- devices,
+        device.room_code == room_code,
+        is_nil(exclude_pid) or pid != exclude_pid do
       send(pid, {:broadcast, encoded})
     end
-    {:noreply, devices}
-  end
 
-  @impl true
-  def handle_cast({:broadcast, message, exclude_pid}, devices) do
-    encoded = Jason.encode!(message)
-    for {pid, _name} <- devices, pid != exclude_pid do
-      send(pid, {:broadcast, encoded})
-    end
     {:noreply, devices}
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _reason}, devices) do
-    device_name = Map.get(devices, pid, "未知设备")
+    device = Map.get(devices, pid, %{name: "未知设备", room_code: nil})
     devices = Map.delete(devices, pid)
 
-    # 广播设备离线通知
     leave_msg = %{
       type: "system",
-      content: "#{device_name} 已离线",
-      devices: Enum.map(devices, fn {_p, n} -> n end)
+      content: "#{device.name} 已离线",
+      devices: list_device_names(devices, device.room_code)
     }
 
     encoded = Jason.encode!(leave_msg)
-    for {p, _n} <- devices do
-      send(p, {:broadcast, encoded})
+
+    for {peer_pid, current_device} <- devices, current_device.room_code == device.room_code do
+      send(peer_pid, {:broadcast, encoded})
     end
 
     {:noreply, devices}
+  end
+
+  defp list_device_names(devices, room_code) do
+    devices
+    |> Enum.filter(fn {_pid, device} -> device.room_code == room_code end)
+    |> Enum.map(fn {_pid, device} -> device.name end)
+    |> Enum.sort()
   end
 end

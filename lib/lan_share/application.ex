@@ -15,9 +15,7 @@ defmodule LanShare.Application do
       LanShare.MessageStore,
       # HTTP 服务器
       {Plug.Cowboy,
-       scheme: :http,
-       plug: LanShare.Router,
-       options: [port: port, dispatch: dispatch()]}
+       scheme: :http, plug: LanShare.Router, options: [port: port, dispatch: dispatch()]}
     ]
 
     Logger.info("LanShare 启动于 http://0.0.0.0:#{port}")

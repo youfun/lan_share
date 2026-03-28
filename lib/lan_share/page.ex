@@ -39,6 +39,35 @@ defmodule LanShare.Page do
         #overlay.open { display: flex; }
         #roomQrModal { display: none; }
         #roomQrModal.open { display: flex; }
+        .md-content p + p { margin-top: 0.5rem; }
+        .md-content ul, .md-content ol { margin: 0.5rem 0; padding-left: 1.25rem; }
+        .md-content li + li { margin-top: 0.25rem; }
+        .md-content a { color: #075e54; text-decoration: underline; }
+        .md-content blockquote {
+          border-left: 3px solid #99cfc7;
+          margin: 0.5rem 0;
+          padding-left: 0.75rem;
+          color: #4b5563;
+        }
+        .md-content pre {
+          background: rgba(15, 23, 42, 0.92);
+          color: #f8fafc;
+          border-radius: 0.75rem;
+          margin: 0.5rem 0;
+          overflow-x: auto;
+          padding: 0.75rem;
+        }
+        .md-content code {
+          background: rgba(15, 23, 42, 0.08);
+          border-radius: 0.35rem;
+          font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+          font-size: 0.85em;
+          padding: 0.1rem 0.35rem;
+        }
+        .md-content pre code {
+          background: transparent;
+          padding: 0;
+        }
         /* 滚动条美化 */
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -262,11 +291,22 @@ defmodule LanShare.Page do
           ].join(' ');
 
           if (msg.type === 'text') {
+            const contentHtml = msg.content_html || `<p>${renderText(msg.content)}</p>`;
             bubble.innerHTML = `
               ${!isMine ? `<p class="text-xs font-semibold text-brand mb-0.5">${escapeHtml(msg.sender)}</p>` : ''}
-              <p>${renderText(msg.content)}</p>
-              <p class="text-[10px] text-gray-400 text-right mt-1">${formatTime(msg.timestamp)}</p>
+              <div class="md-content">${contentHtml}</div>
+              <div class="mt-2 flex items-center justify-end gap-2 text-[10px] text-gray-400">
+                <button type="button"
+                        class="copy-message rounded-full border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-black/5 transition-colors">
+                  复制源码
+                </button>
+                <span>${formatTime(msg.timestamp)}</span>
+              </div>
             `;
+
+            bubble.querySelector('.copy-message').addEventListener('click', event => {
+              copyMessageSource(msg.content, event.currentTarget);
+            });
           } else if (msg.type === 'image') {
             bubble.innerHTML = `
               ${!isMine ? `<p class="text-xs font-semibold text-brand mb-1">${escapeHtml(msg.sender)}</p>` : ''}
@@ -377,6 +417,29 @@ defmodule LanShare.Page do
           }
         }
 
+        async function copyMessageSource(source, button) {
+          const originalText = button.textContent;
+
+          try {
+            await navigator.clipboard.writeText(source);
+          } catch (_error) {
+            const helper = document.createElement('textarea');
+            helper.value = source;
+            helper.setAttribute('readonly', 'readonly');
+            helper.style.position = 'fixed';
+            helper.style.opacity = '0';
+            document.body.appendChild(helper);
+            helper.select();
+            document.execCommand('copy');
+            document.body.removeChild(helper);
+          }
+
+          button.textContent = '已复制';
+          window.setTimeout(() => {
+            button.textContent = originalText;
+          }, 1200);
+        }
+
         /* ── 发送 ── */
         function sendText() {
           const input = document.getElementById('textInput');
@@ -448,9 +511,9 @@ defmodule LanShare.Page do
           return d.innerHTML;
         }
 
-        // 先 escapeHtml 再把 \n 换成 <br>，保留粘贴文本的换行格式
+        // 仅作为旧消息的后备渲染，正常文本消息优先使用服务端生成的 Markdown HTML
         function renderText(text) {
-          return escapeHtml(text).replace(/\n/g, '<br>');
+          return escapeHtml(text).replaceAll(String.fromCharCode(10), '<br>');
         }
 
         function formatTime(iso) {

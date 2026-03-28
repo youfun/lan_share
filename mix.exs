@@ -22,7 +22,9 @@ defmodule LanShare.MixProject do
     [
       {:plug_cowboy, "~> 2.7"},
       {:plug, "~> 1.16"},
-      {:jason, "~> 1.4"}
+      {:jason, "~> 1.4"},
+      {:earmark, "~> 1.4"},
+      {:html_sanitize_ex, "~> 1.4"}
     ]
   end
 end

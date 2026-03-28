@@ -63,15 +63,16 @@ defmodule LanShare.WebSocket do
   def websocket_handle({:text, raw}, state) do
     case Jason.decode(raw) do
       {:ok, %{"type" => "text", "content" => content}} ->
-        text = String.trim(content)
+        text = content
 
-        if text == "" do
+        if String.trim(text) == "" do
           {:ok, state}
         else
           msg = %{
             type: "text",
             sender: state.device_name,
             content: text,
+            content_html: LanShare.Markdown.render(text),
             timestamp: now_iso(),
             room_code: state.room_code
           }

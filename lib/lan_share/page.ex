@@ -351,6 +351,7 @@ defmodule LanShare.Page do
       <footer class="bg-white border-t border-gray-200 px-4 py-2.5 flex gap-2 items-end flex-shrink-0">
         <button id="imageSendButton"
                 onclick="document.getElementById('imageInput').click()"
+                title="选择本地图片，或直接粘贴图片"
                 class="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 active:bg-gray-300
                         flex items-center justify-center text-xl flex-shrink-0 transition-colors">
           &#128247;
@@ -365,7 +366,7 @@ defmodule LanShare.Page do
         </button>
         <input type="file" id="transferFileInput" class="hidden" onchange="handleFileSelect(event)">
         <textarea id="textInput" rows="1"
-                  placeholder="输入消息… (Shift+Enter 换行)"
+              placeholder="输入消息… (Shift+Enter 换行，Ctrl+V 粘贴图片)"
                   onkeydown="handleKeyDown(event)"
                   oninput="autoResize(this)"
                   class="flex-1 border border-gray-300 focus:border-brand rounded-2xl
@@ -426,6 +427,8 @@ defmodule LanShare.Page do
           shouldStickToBottom =
             messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 32;
         });
+
+        document.addEventListener('paste', handlePaste);
 
         /* ── WebSocket ── */
         function connect() {
@@ -736,19 +739,99 @@ defmodule LanShare.Page do
         function handleImageSelect(event) {
           const file = event.target.files[0];
           if (!file) return;
-          if (file.size > 5 * 1024 * 1024) {
-            alert('图片大小不能超过 5MB');
-            event.target.value = '';
+          event.target.value = '';
+          void sendImageFile(file);
+        }
+
+        function handlePaste(event) {
+          const clipboardFiles = extractClipboardImageFiles(event.clipboardData);
+
+          if (clipboardFiles.length === 0) {
             return;
           }
-          const reader = new FileReader();
-          reader.onload = e => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'image', data: e.target.result, filename: file.name }));
-            }
-          };
-          reader.readAsDataURL(file);
-          event.target.value = '';
+
+          event.preventDefault();
+          void sendClipboardImages(clipboardFiles);
+        }
+
+        async function sendClipboardImages(files) {
+          for (const [index, file] of files.entries()) {
+            const clipboardImage = createClipboardImageFile(file, index);
+            await sendImageFile(clipboardImage);
+          }
+        }
+
+        async function sendImageFile(file) {
+          if (file.size > 5 * 1024 * 1024) {
+            alert('图片大小不能超过 5MB');
+            return;
+          }
+
+          const dataUrl = await readFileAsDataUrl(file);
+
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'image', data: dataUrl, filename: file.name || 'image' }));
+          }
+        }
+
+        function readFileAsDataUrl(file) {
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+
+            reader.onload = event => resolve(event.target.result);
+            reader.onerror = () => reject(new Error('图片读取失败'));
+            reader.readAsDataURL(file);
+          });
+        }
+
+        function extractClipboardImageFiles(clipboardData) {
+          if (!clipboardData) {
+            return [];
+          }
+
+          const files = Array.from(clipboardData.items || [])
+            .filter(item => item.kind === 'file' && item.type && item.type.startsWith('image/'))
+            .map(item => item.getAsFile())
+            .filter(Boolean);
+
+          if (files.length > 0) {
+            return files;
+          }
+
+          return Array.from(clipboardData.files || [])
+            .filter(file => file.type && file.type.startsWith('image/'));
+        }
+
+        function createClipboardImageFile(file, index) {
+          if (file.name) {
+            return file;
+          }
+
+          const extension = guessImageExtension(file.type);
+          const filename = `pasted-image-${Date.now()}-${index + 1}.${extension}`;
+
+          return new File([file], filename, {
+            type: file.type || 'image/png',
+            lastModified: Date.now()
+          });
+        }
+
+        function guessImageExtension(mimeType) {
+          switch (mimeType) {
+            case 'image/jpeg':
+              return 'jpg';
+            case 'image/gif':
+              return 'gif';
+            case 'image/webp':
+              return 'webp';
+            case 'image/bmp':
+              return 'bmp';
+            case 'image/svg+xml':
+              return 'svg';
+            case 'image/png':
+            default:
+              return 'png';
+          }
         }
 
         async function handleFileSelect(event) {

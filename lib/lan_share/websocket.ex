@@ -165,7 +165,26 @@ defmodule LanShare.WebSocket do
 
   defp sanitize_filename(_), do: "image"
 
-  defp build_file_message(_file_id, %{room_code: nil}), do: :error
+  defp build_file_message(file_id, %{room_code: nil} = state) do
+    case LanShare.FileStore.lookup(file_id) do
+      {:ok, metadata} when metadata.room_code == "_LOBBY" ->
+        {:ok,
+         %{
+           type: "file",
+           id: metadata.id,
+           filename: metadata.filename,
+           size: metadata.size,
+           content_type: metadata.content_type,
+           download_url: LanShare.FileStore.download_url(metadata.id, "_LOBBY"),
+           sender: state.device_name,
+           timestamp: now_iso(),
+           room_code: nil
+         }}
+
+      _ ->
+        :error
+    end
+  end
 
   defp build_file_message(file_id, state) do
     case LanShare.FileStore.lookup(file_id) do

@@ -195,6 +195,8 @@ defmodule LanShare.Router do
     scheme <> "://" <> authority <> LanShare.Room.path(room_code)
   end
 
+  defp normalize_room_param("_LOBBY"), do: {:ok, "_LOBBY"}
+
   defp normalize_room_param(room_param) do
     case LanShare.Room.normalize(room_param) do
       nil -> {:error, :invalid_room}

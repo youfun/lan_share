@@ -307,24 +307,31 @@ defmodule LanShare.Page do
           </div>
         </div>
 
-        <form action="/join" method="post" class="flex flex-col sm:flex-row gap-2">
-          <input id="roomInput"
-                 name="code"
-                 type="text"
-                 inputmode="latin"
-                 maxlength="4"
-                 placeholder="输入 4 位房间码"
-                 value="#{room_code || ""}"
-                 class="flex-1 border border-gray-300 focus:border-brand rounded-2xl px-4 py-2 text-sm outline-none uppercase tracking-[0.3em] text-center sm:text-left">
-          <button type="submit"
-                  class="px-4 py-2 rounded-2xl bg-gray-900 text-white text-sm hover:bg-black transition-colors">
-            加入房间
-          </button>
-        </form>
+        <div class="flex items-center gap-2 cursor-pointer select-none" onclick="toggleJoinSection()">
+          <span class="text-xs text-gray-500">加入房间</span>
+          <span id="joinToggleIcon" class="text-xs text-gray-400">▼</span>
+        </div>
 
-        <p id="roomHint" class="text-xs text-gray-500">
-          #{if room_code, do: "当前房间链接可扫码分享，消息与在线设备仅在该房间可见。", else: "未加入房间时处于大厅。可输入房间码加入，或直接创建新的私密房间。"}
-        </p>
+        <div id="joinSection">
+          <form action="/join" method="post" class="flex flex-col sm:flex-row gap-2">
+            <input id="roomInput"
+                   name="code"
+                   type="text"
+                   inputmode="latin"
+                   maxlength="4"
+                   placeholder="输入 4 位房间码"
+                   value="#{room_code || ""}"
+                   class="flex-1 border border-gray-300 focus:border-brand rounded-2xl px-4 py-2 text-sm outline-none uppercase tracking-[0.3em] text-center sm:text-left">
+            <button type="submit"
+                    class="px-4 py-2 rounded-2xl bg-gray-900 text-white text-sm hover:bg-black transition-colors">
+              加入房间
+            </button>
+          </form>
+
+          <p id="roomHint" class="text-xs text-gray-500 mt-2">
+            #{if room_code, do: "当前房间链接可扫码分享，消息与在线设备仅在该房间可见。", else: "未加入房间时处于大厅。可输入房间码加入，或直接创建新的私密房间。"}
+          </p>
+        </div>
       </section>
 
       <!-- 设备侧边栏（固定右侧抽屉） -->
@@ -839,11 +846,6 @@ defmodule LanShare.Page do
           event.target.value = '';
           if (!file) return;
 
-          if (!currentRoomCode) {
-            alert('请先加入房间，再发送文件');
-            return;
-          }
-
           if (file.size > 1024 * 1024 * 1024) {
             alert('文件大小不能超过 1GB');
             return;
@@ -864,7 +866,7 @@ defmodule LanShare.Page do
           setFileUploadButtonState(hasInFlightUpload());
 
           const formData = new FormData();
-          formData.append('room', currentRoomCode);
+          formData.append('room', currentRoomCode || '_LOBBY');
           formData.append('file', upload.file);
 
           try {
@@ -1052,6 +1054,24 @@ defmodule LanShare.Page do
             return `/r/${roomCode}/qrcode.svg`;
           }
         };
+
+        function toggleJoinSection() {
+          const section = document.getElementById('joinSection');
+          const icon = document.getElementById('joinToggleIcon');
+          const collapsed = section.style.display === 'none';
+          section.style.display = collapsed ? '' : 'none';
+          icon.textContent = collapsed ? '▼' : '▶';
+          localStorage.setItem('joinSectionCollapsed', collapsed ? '0' : '1');
+        }
+
+        (function() {
+          if (localStorage.getItem('joinSectionCollapsed') === '1') {
+            const section = document.getElementById('joinSection');
+            const icon = document.getElementById('joinToggleIcon');
+            if (section) section.style.display = 'none';
+            if (icon) icon.textContent = '▶';
+          }
+        })();
 
         syncRoomUi();
         connect();

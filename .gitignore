@@ -24,3 +24,4 @@ lan_share-*.tar
 
 .playwright-mcp/
 console-errors.txt
+var/uploads/

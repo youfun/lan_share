@@ -25,3 +25,6 @@ lan_share-*.tar
 .playwright-mcp/
 console-errors.txt
 var/uploads/
+var/*.sqlite3
+var/*.sqlite3-shm
+var/*.sqlite3-wal

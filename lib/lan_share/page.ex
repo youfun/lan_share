@@ -61,6 +61,12 @@ defmodule LanShare.Page do
           text-decoration: none;
         }
 
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+        .animate-pulse { animation: pulse 1.5s ease-in-out infinite; }
+
         .hidden { display: none !important; }
         .flex { display: flex; }
         .block { display: block; }
@@ -266,20 +272,15 @@ defmodule LanShare.Page do
     </head>
     <body class="bg-gray-100 h-screen flex flex-col font-sans overflow-hidden">
 
-      <!-- 连接状态栏 -->
-      <div id="statusBar"
-           class="text-center text-xs text-white py-0.5 px-2 bg-yellow-500 transition-colors duration-300">
-        连接中...
-      </div>
-
       <!-- 顶部栏 -->
       <header class="bg-brand text-white px-4 py-3 flex justify-between items-center shadow-md flex-shrink-0">
         <h1 class="text-lg font-semibold tracking-wide">LanShare</h1>
         <button id="deviceCount"
                 onclick="toggleSidebar()"
                 class="bg-white/20 hover:bg-white/30 active:bg-white/10
-                       text-sm px-3 py-1 rounded-full transition-colors">
-          0 在线
+                       text-sm px-3 py-1 rounded-full flex items-center gap-1.5 transition-colors">
+          <span id="connDot" class="inline-block w-2 h-2 rounded-full bg-yellow-400"></span>
+          <span id="connLabel">连接中…</span>
         </button>
       </header>
 
@@ -445,22 +446,36 @@ defmodule LanShare.Page do
           ws = new WebSocket(wsUrl);
 
           ws.onopen = () => {
-            setStatus('已连接', 'bg-green-500');
+            setConnState(true);
             clearTimeout(reconnectTimer);
           };
           ws.onclose = () => {
-            setStatus('连接断开，正在重连…', 'bg-red-500');
+            setConnState(false);
             reconnectTimer = setTimeout(connect, 2000);
           };
           ws.onerror = () => ws.close();
           ws.onmessage = e => handleMessage(JSON.parse(e.data));
         }
 
-        function setStatus(text, colorClass) {
-          const el = document.getElementById('statusBar');
-          el.textContent = text;
-          el.className = `text-center text-xs text-white py-0.5 px-2 transition-colors duration-300 ${colorClass}`;
+        let _connected = false;
+
+        function setConnState(connected) {
+          _connected = connected;
+          const dot = document.getElementById('connDot');
+          dot.className = `inline-block w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400 animate-pulse'}`;
+          updateConnLabel();
         }
+
+        function updateConnLabel() {
+          const label = document.getElementById('connLabel');
+          if (!_connected) {
+            label.textContent = '重连中…';
+          } else {
+            label.textContent = _lastDeviceCount !== null ? `${_lastDeviceCount} 在线` : '已连接';
+          }
+        }
+
+        let _lastDeviceCount = null;
 
         /* ── 消息处理 ── */
         function handleMessage(msg) {
@@ -573,7 +588,8 @@ defmodule LanShare.Page do
         }
 
         function updateDeviceList(devices) {
-          document.getElementById('deviceCount').textContent = `${devices.length} 在线`;
+          _lastDeviceCount = devices.length;
+          updateConnLabel();
           document.getElementById('deviceList').innerHTML = devices.map(d => `
             <div class="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-700">
               <span class="w-2 h-2 rounded-full bg-green-400 flex-shrink-0"></span>
@@ -581,6 +597,24 @@ defmodule LanShare.Page do
             </div>
           `).join('');
         }
+
+        function toggleJoinSection() {
+          const section = document.getElementById('joinSection');
+          const icon = document.getElementById('joinToggleIcon');
+          const collapsed = section.style.display === 'none';
+          section.style.display = collapsed ? '' : 'none';
+          icon.textContent = collapsed ? '▼' : '▶';
+          localStorage.setItem('joinSectionCollapsed', collapsed ? '0' : '1');
+        }
+
+        (function() {
+          if (localStorage.getItem('joinSectionCollapsed') === '1') {
+            const section = document.getElementById('joinSection');
+            const icon = document.getElementById('joinToggleIcon');
+            if (section) section.style.display = 'none';
+            if (icon) icon.textContent = '▶';
+          }
+        })();
 
         function syncRoomUi() {
           const roomLabel = currentRoomCode || '大厅';
@@ -1054,24 +1088,6 @@ defmodule LanShare.Page do
             return `/r/${roomCode}/qrcode.svg`;
           }
         };
-
-        function toggleJoinSection() {
-          const section = document.getElementById('joinSection');
-          const icon = document.getElementById('joinToggleIcon');
-          const collapsed = section.style.display === 'none';
-          section.style.display = collapsed ? '' : 'none';
-          icon.textContent = collapsed ? '▼' : '▶';
-          localStorage.setItem('joinSectionCollapsed', collapsed ? '0' : '1');
-        }
-
-        (function() {
-          if (localStorage.getItem('joinSectionCollapsed') === '1') {
-            const section = document.getElementById('joinSection');
-            const icon = document.getElementById('joinToggleIcon');
-            if (section) section.style.display = 'none';
-            if (icon) icon.textContent = '▶';
-          }
-        })();
 
         syncRoomUi();
         connect();

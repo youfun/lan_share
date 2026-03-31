@@ -235,6 +235,12 @@ defmodule LanShare.Page do
         #overlay.open { display: flex; }
         #roomQrModal { display: none; }
         #roomQrModal.open { display: flex; }
+        #filePreviewModal { display: none; }
+        #filePreviewModal.open { display: flex; }
+        #filePreviewSandboxWrap { display: none; }
+        #filePreviewSandboxWrap.open { display: block; }
+        #filePreviewSourceWrap { display: none; }
+        #filePreviewSourceWrap.open { display: block; }
         .md-content p + p { margin-top: 0.5rem; }
         .md-content ul, .md-content ol { margin: 0.5rem 0; padding-left: 1.25rem; }
         .md-content li + li { margin-top: 0.25rem; }
@@ -284,53 +290,57 @@ defmodule LanShare.Page do
         </button>
       </header>
 
-      <section class="bg-white border-b border-gray-200 px-4 py-3 flex flex-col gap-3 shadow-sm">
-        <div class="flex flex-wrap gap-2 items-center justify-between">
-          <div>
-            <p class="text-xs uppercase tracking-[0.2em] text-gray-400">当前会话</p>
-            <p id="roomLabel" class="text-sm font-semibold text-gray-800">#{assigns.room_label}</p>
+      <section class="bg-white border-b border-gray-200 px-4 py-2 flex flex-col gap-2 shadow-sm">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex-1 min-w-0">
+            <p class="text-[10px] uppercase tracking-[0.2em] text-gray-400 leading-none mb-0.5">当前会话</p>
+            <div class="flex items-baseline gap-2">
+              <p id="roomLabel" class="text-sm font-semibold text-gray-800 truncate">#{assigns.room_label}</p>
+              <div id="joinToggle" class="flex items-center gap-1 cursor-pointer select-none opacity-60 hover:opacity-100 transition-opacity" onclick="toggleJoinSection()">
+                <span class="text-[10px] text-gray-500">加入房间</span>
+                <span id="joinToggleIcon" class="text-[10px] text-gray-400">▶</span>
+              </div>
+            </div>
           </div>
-          <div class="flex flex-wrap gap-2">
+
+          <div class="flex items-center gap-1.5 flex-shrink-0">
             <button onclick="createRoom()"
-                    class="px-3 py-2 rounded-full bg-brand text-white text-sm hover:bg-brand-light transition-colors">
+                    class="px-2.5 py-1.5 rounded-full bg-brand text-white text-xs font-medium hover:bg-brand-light transition-colors">
               创建房间
             </button>
             <button id="showQrButton"
                     onclick="openQrModal()"
-                    class="px-3 py-2 rounded-full border border-brand text-brand text-sm hover:bg-brand/5 transition-colors #{if room_code, do: "", else: "hidden"}">
-              显示二维码
+                    class="px-2.5 py-1.5 rounded-full border border-brand text-brand text-xs font-medium hover:bg-brand/5 transition-colors #{if room_code, do: "", else: "hidden"}">
+              二维码
             </button>
             <a id="leaveRoomLink"
                href="/"
-               class="px-3 py-2 rounded-full border border-gray-300 text-gray-600 text-sm hover:bg-gray-50 transition-colors #{if room_code, do: "", else: "hidden"}">
-              返回大厅
+               class="px-2.5 py-1.5 rounded-full border border-gray-300 text-gray-600 text-xs font-medium hover:bg-gray-50 transition-colors #{if room_code, do: "", else: "hidden"}">
+              大厅
             </a>
           </div>
         </div>
 
-        <div class="flex items-center gap-2 cursor-pointer select-none" onclick="toggleJoinSection()">
-          <span class="text-xs text-gray-500">加入房间</span>
-          <span id="joinToggleIcon" class="text-xs text-gray-400">▼</span>
-        </div>
-
-        <div id="joinSection">
-          <form action="/join" method="post" class="flex flex-col sm:flex-row gap-2">
+        <div id="joinSection" class="hidden border-t border-gray-50 pt-2 pb-1">
+          <form action="/join" method="post" class="flex items-center gap-2">
             <input id="roomInput"
                    name="code"
                    type="text"
                    inputmode="latin"
                    maxlength="4"
-                   placeholder="输入 4 位房间码"
+                   placeholder="4位"
                    value="#{room_code || ""}"
-                   class="flex-1 border border-gray-300 focus:border-brand rounded-2xl px-4 py-2 text-sm outline-none uppercase tracking-[0.3em] text-center sm:text-left">
+                   class="w-24 border border-gray-300 focus:border-brand rounded-xl px-3 py-1.5 text-sm outline-none uppercase tracking-[0.3em] text-center">
             <button type="submit"
-                    class="px-4 py-2 rounded-2xl bg-gray-900 text-white text-sm hover:bg-black transition-colors">
-              加入房间
+                    class="px-4 py-1.5 rounded-xl bg-gray-900 text-white text-sm hover:bg-black transition-colors">
+              加入
             </button>
+            <p id="roomHint" class="hidden sm:block text-[10px] text-gray-400 truncate flex-1">
+              #{if room_code, do: "消息僅房間可見。", else: "大厅或输入房间码。"}
+            </p>
           </form>
-
-          <p id="roomHint" class="text-xs text-gray-500 mt-2">
-            #{if room_code, do: "当前房间链接可扫码分享，消息与在线设备仅在该房间可见。", else: "未加入房间时处于大厅。可输入房间码加入，或直接创建新的私密房间。"}
+          <p id="roomHint" class="sm:hidden text-[10px] text-gray-400 mt-1.5 px-1 truncate">
+            #{if room_code, do: "当前房间消息与在线设备仅在该房间可见。", else: "未加入房间时处于大厅。"}
           </p>
         </div>
       </section>
@@ -419,6 +429,60 @@ defmodule LanShare.Page do
         </div>
       </div>
 
+      <div id="filePreviewModal"
+           class="fixed inset-0 bg-black/50 z-[180] items-center justify-center px-4"
+           onclick="closeFilePreview(event)">
+        <div class="w-full max-w-4xl max-h-[85vh] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col" onclick="event.stopPropagation()">
+          <div class="px-5 py-4 border-b border-gray-200 flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <p class="text-xs uppercase tracking-[0.2em] text-gray-400">源码预览</p>
+              <h2 id="filePreviewTitle" class="text-base font-semibold text-gray-900 break-all">文件内容</h2>
+            </div>
+            <button onclick="closeFilePreview()" class="text-2xl leading-none text-gray-400 hover:text-gray-700">&times;</button>
+          </div>
+          <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3 text-xs text-gray-500">
+            <span id="filePreviewMeta">加载中...</span>
+            <div class="flex items-center gap-2">
+              <button id="filePreviewSourceTab"
+                      type="button"
+                      class="rounded-full border border-gray-300 px-3 py-1 text-xs text-gray-600 hover:bg-black/5 transition-colors">
+                源码
+              </button>
+              <button id="filePreviewRenderTab"
+                      type="button"
+                      class="hidden rounded-full border border-gray-300 px-3 py-1 text-xs text-gray-600 hover:bg-black/5 transition-colors">
+                安全预览
+              </button>
+              <button id="copyFilePreviewButton"
+                      type="button"
+                      class="rounded-full border border-gray-300 px-3 py-1 text-xs text-gray-600 hover:bg-black/5 transition-colors">
+                复制源码
+              </button>
+            </div>
+          </div>
+          <div class="flex-1 overflow-hidden bg-gray-950">
+            <div id="filePreviewSourceWrap" class="open h-full overflow-auto bg-gray-950">
+              <pre id="filePreviewContent" class="m-0 min-h-full p-5 text-sm leading-relaxed text-gray-100 whitespace-pre-wrap break-words"></pre>
+            </div>
+            <div id="filePreviewSandboxWrap" class="h-full bg-white">
+              <iframe id="filePreviewSandbox"
+                      title="HTML 安全预览"
+                      sandbox
+                      referrerpolicy="no-referrer"
+                      style="border:0; width:100%; height:100%; background:#fff;"></iframe>
+            </div>
+          </div>
+          <div class="px-5 py-3 border-t border-gray-100 flex items-center justify-between gap-3 text-xs text-gray-500 bg-white">
+            <span>支持 Esc、右上角关闭、点击遮罩关闭</span>
+            <button type="button"
+                    onclick="closeFilePreview()"
+                    class="rounded-full bg-gray-900 px-4 py-2 text-xs text-white hover:bg-black transition-colors">
+              关闭
+            </button>
+          </div>
+        </div>
+      </div>
+
       <script>
         let ws;
         let myName = '';
@@ -426,8 +490,14 @@ defmodule LanShare.Page do
         let reconnectTimer;
         let shouldStickToBottom = true;
         let nextLocalUploadId = 1;
+        const LONG_TEXT_CHAR_THRESHOLD = 4000;
+        const LONG_TEXT_BYTE_THRESHOLD = 12 * 1024;
+        const HTML_SNIPPET_CHAR_THRESHOLD = 1200;
+        const LONG_TEXT_FILENAME_PREFIX = 'long-message';
 
         const localFileUploads = new Map();
+        const previewCache = new Map();
+        let currentFilePreviewState = null;
 
         const messagesEl = document.getElementById('messages');
 
@@ -437,6 +507,7 @@ defmodule LanShare.Page do
         });
 
         document.addEventListener('paste', handlePaste);
+        document.addEventListener('keydown', handleGlobalKeyDown);
 
         /* ── WebSocket ── */
         function connect() {
@@ -547,6 +618,7 @@ defmodule LanShare.Page do
               <p class="text-[10px] text-gray-400 text-right mt-1">${formatTime(msg.timestamp)}</p>
             `;
           } else if (msg.type === 'file') {
+            const previewable = isPreviewableFileMessage(msg);
             bubble.innerHTML = `
               ${!isMine ? `<p class="text-xs font-semibold text-brand mb-1">${escapeHtml(msg.sender)}</p>` : ''}
               <div class="flex items-start gap-2">
@@ -558,14 +630,55 @@ defmodule LanShare.Page do
               </div>
               <div class="mt-2 flex items-center justify-between gap-2 text-[10px] text-gray-400">
                 <span>${formatTime(msg.timestamp)}</span>
-                <button type="button"
-                        data-download-url="${escapeAttribute(msg.download_url)}"
-                        data-download-filename="${escapeAttribute(msg.filename)}"
-                        class="download-file rounded-full border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-black/5 transition-colors">
-                  下载文件
-                </button>
+                <div class="flex items-center gap-2">
+                  ${previewable ? `<button type="button"
+                        data-copy-url="${escapeAttribute(msg.download_url)}"
+                        data-copy-filename="${escapeAttribute(msg.filename)}"
+                        data-copy-content-type="${escapeAttribute(msg.content_type || '')}"
+                        class="copy-file-source rounded-full border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-black/5 transition-colors">
+                    复制源码
+                  </button>` : ''}
+                  ${previewable ? `<button type="button"
+                        data-preview-url="${escapeAttribute(msg.download_url)}"
+                        data-preview-filename="${escapeAttribute(msg.filename)}"
+                        data-preview-content-type="${escapeAttribute(msg.content_type || '')}"
+                        class="preview-file rounded-full border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-black/5 transition-colors">
+                    预览源码
+                  </button>` : ''}
+                  <button type="button"
+                          data-download-url="${escapeAttribute(msg.download_url)}"
+                          data-download-filename="${escapeAttribute(msg.filename)}"
+                          class="download-file rounded-full border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-black/5 transition-colors">
+                    下载文件
+                  </button>
+                </div>
               </div>
             `;
+
+            const previewButton = bubble.querySelector('.preview-file');
+            const copyButton = bubble.querySelector('.copy-file-source');
+
+            if (copyButton) {
+              copyButton.addEventListener('click', event => {
+                void copyFileMessageSource(
+                  event.currentTarget.dataset.copyUrl,
+                  event.currentTarget.dataset.copyFilename,
+                  event.currentTarget.dataset.copyContentType,
+                  event.currentTarget
+                );
+              });
+            }
+
+            if (previewButton) {
+              previewButton.addEventListener('click', event => {
+                void openFilePreview(
+                  event.currentTarget.dataset.previewUrl,
+                  event.currentTarget.dataset.previewFilename,
+                  event.currentTarget.dataset.previewContentType,
+                  event.currentTarget
+                );
+              });
+            }
 
             bubble.querySelector('.download-file').addEventListener('click', event => {
               startFileDownload(
@@ -601,18 +714,30 @@ defmodule LanShare.Page do
         function toggleJoinSection() {
           const section = document.getElementById('joinSection');
           const icon = document.getElementById('joinToggleIcon');
-          const collapsed = section.style.display === 'none';
-          section.style.display = collapsed ? '' : 'none';
-          icon.textContent = collapsed ? '▼' : '▶';
-          localStorage.setItem('joinSectionCollapsed', collapsed ? '0' : '1');
+          const isHidden = section.classList.contains('hidden');
+
+          if (isHidden) {
+            section.classList.remove('hidden');
+            icon.textContent = '▼';
+            localStorage.setItem('joinSectionCollapsed', '0');
+          } else {
+            section.classList.add('hidden');
+            icon.textContent = '▶';
+            localStorage.setItem('joinSectionCollapsed', '1');
+          }
         }
 
         (function() {
+          const section = document.getElementById('joinSection');
+          const icon = document.getElementById('joinToggleIcon');
+          if (!section) return;
+
           if (localStorage.getItem('joinSectionCollapsed') === '1') {
-            const section = document.getElementById('joinSection');
-            const icon = document.getElementById('joinToggleIcon');
-            if (section) section.style.display = 'none';
+            section.classList.add('hidden');
             if (icon) icon.textContent = '▶';
+          } else {
+            section.classList.remove('hidden');
+            if (icon) icon.textContent = '▼';
           }
         })();
 
@@ -705,8 +830,10 @@ defmodule LanShare.Page do
           }, 1200);
         }
 
-        function createLocalFileUpload(file) {
+        function createLocalFileUpload(file, options = {}) {
           const localId = String(nextLocalUploadId++);
+          const detailText = options.detailText || formatFileSize(file.size);
+          const pendingText = options.pendingText || '正在上传...';
           const wrap = document.createElement('div');
           wrap.className = 'flex justify-end';
 
@@ -717,11 +844,11 @@ defmodule LanShare.Page do
               <div class="w-10 h-10 rounded-lg bg-white/30 flex items-center justify-center text-lg flex-shrink-0">&#128206;</div>
               <div class="flex-1 break-words">
                 <p class="font-medium">${escapeHtml(file.name || '未命名文件')}</p>
-                <p class="text-xs text-gray-500 mt-1">${formatFileSize(file.size)}</p>
+                <p class="text-xs text-gray-500 mt-1">${escapeHtml(detailText)}</p>
               </div>
             </div>
             <div class="mt-2 flex items-center justify-between gap-2 text-[10px] text-gray-400">
-              <span class="upload-status">正在上传...</span>
+              <span class="upload-status">${escapeHtml(pendingText)}</span>
               <button type="button"
                       class="retry-upload hidden rounded-full border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-black/5 transition-colors">
                 重试
@@ -740,6 +867,7 @@ defmodule LanShare.Page do
             statusEl: bubble.querySelector('.upload-status'),
             retryButton: bubble.querySelector('.retry-upload'),
             inFlight: false,
+            pendingText,
             uploadedMeta: null,
             serverId: null
           };
@@ -772,9 +900,255 @@ defmodule LanShare.Page do
           const text = input.value;
           // 不 trim，保留用户的首尾空白；但全空白不发
           if (!text.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+          if (shouldSendTextAsFile(text)) {
+            void sendLongTextAsFile(text, input);
+            return;
+          }
+
           ws.send(JSON.stringify({ type: 'text', content: text }));
           input.value = '';
           input.style.height = 'auto';
+        }
+
+        function shouldSendTextAsFile(text) {
+          if (!text || !text.trim()) {
+            return false;
+          }
+
+          if (looksLikeHtmlDocument(text) && text.length >= HTML_SNIPPET_CHAR_THRESHOLD) {
+            return true;
+          }
+
+          const byteLength = new TextEncoder().encode(text).length;
+          return text.length >= LONG_TEXT_CHAR_THRESHOLD || byteLength >= LONG_TEXT_BYTE_THRESHOLD;
+        }
+
+        async function sendLongTextAsFile(text, input) {
+          const descriptor = buildLongTextFile(text);
+          const file = new File([text], descriptor.filename, {
+            type: descriptor.contentType,
+            lastModified: Date.now()
+          });
+
+          if (findInFlightUpload(file)) {
+            return;
+          }
+
+          const upload = createLocalFileUpload(file, {
+            detailText: `${descriptor.label} · ${formatFileSize(file.size)}`,
+            pendingText: `内容较长，正在上传${descriptor.label}...`
+          });
+
+          input.value = '';
+          input.style.height = 'auto';
+          await startFileUpload(upload);
+        }
+
+        function buildLongTextFile(text) {
+          const kind = detectLongTextFileKind(text);
+          const timestamp = formatTimestampForFilename(Date.now());
+
+          return {
+            filename: `${LONG_TEXT_FILENAME_PREFIX}-${timestamp}.${kind.extension}`,
+            contentType: kind.contentType,
+            label: kind.label
+          };
+        }
+
+        function detectLongTextFileKind(text) {
+          if (looksLikeHtmlDocument(text)) {
+            return {
+              extension: 'html',
+              contentType: 'text/html',
+              label: 'HTML 文档'
+            };
+          }
+
+          return {
+            extension: 'md',
+            contentType: 'text/markdown',
+            label: 'Markdown 文档'
+          };
+        }
+
+        function looksLikeHtmlDocument(text) {
+          const sample = text.trim();
+
+          if (!sample.startsWith('<')) {
+            return false;
+          }
+
+          if (/<\!doctype\s+html/i.test(sample) || /<html[\s>]/i.test(sample)) {
+            return true;
+          }
+
+          const structuralTagMatches = sample.match(/<(head|body|main|section|article|div|table|form|style|script|svg|header|footer|nav)[\s>]/gi) || [];
+          const closingTagMatches = sample.match(new RegExp('<\\/[a-z][^>]*>', 'gi')) || [];
+
+          return structuralTagMatches.length >= 2 && closingTagMatches.length >= 2;
+        }
+
+        function isPreviewableFileMessage(msg) {
+          return isPreviewableTextType(msg.content_type, msg.filename);
+        }
+
+        function isPreviewableTextType(contentType, filename) {
+          const normalizedType = (contentType || '').toLowerCase();
+          const lowerName = (filename || '').toLowerCase();
+
+          if (normalizedType.startsWith('text/')) {
+            return true;
+          }
+
+          return ['.md', '.markdown', '.html', '.htm', '.txt', '.json', '.xml', '.csv', '.js', '.ts', '.css'].some(ext => lowerName.endsWith(ext));
+        }
+
+        async function openFilePreview(downloadUrl, filename, contentType, button) {
+          if (!downloadUrl) {
+            return;
+          }
+
+          const originalText = button ? button.textContent : '';
+
+          try {
+            if (button) {
+              button.textContent = '加载中...';
+            }
+
+            const cacheKey = `${downloadUrl}|${contentType || ''}|${filename || ''}`;
+            const source = await fetchPreviewSource(downloadUrl, filename, contentType);
+            showFilePreview(filename, contentType, source);
+          } catch (error) {
+            alert(error.message || '文件预览失败');
+          } finally {
+            if (button) {
+              button.textContent = originalText;
+            }
+          }
+        }
+
+        async function copyFileMessageSource(downloadUrl, filename, contentType, button) {
+          if (!downloadUrl) {
+            return;
+          }
+
+          const source = await fetchPreviewSource(downloadUrl, filename, contentType);
+          await copyMessageSource(source || '', button);
+        }
+
+        async function fetchPreviewSource(downloadUrl, filename, contentType) {
+          const cacheKey = `${downloadUrl}|${contentType || ''}|${filename || ''}`;
+          let source = previewCache.get(cacheKey);
+
+          if (typeof source === 'string') {
+            return source;
+          }
+
+          const response = await fetch(downloadUrl, {
+            headers: {
+              'X-Requested-With': 'LanSharePreview'
+            }
+          });
+
+          if (!response.ok) {
+            throw new Error('文件预览失败');
+          }
+
+          source = await response.text();
+          previewCache.set(cacheKey, source);
+          return source;
+        }
+
+        function showFilePreview(filename, contentType, source) {
+          const modal = document.getElementById('filePreviewModal');
+          const title = document.getElementById('filePreviewTitle');
+          const meta = document.getElementById('filePreviewMeta');
+          const content = document.getElementById('filePreviewContent');
+          const copyButton = document.getElementById('copyFilePreviewButton');
+          const sourceTab = document.getElementById('filePreviewSourceTab');
+          const renderTab = document.getElementById('filePreviewRenderTab');
+          const sourceWrap = document.getElementById('filePreviewSourceWrap');
+          const sandboxWrap = document.getElementById('filePreviewSandboxWrap');
+          const sandbox = document.getElementById('filePreviewSandbox');
+          const renderable = isHtmlPreviewType(contentType, filename);
+
+          title.textContent = filename || '文件内容';
+          meta.textContent = `${contentType || 'text/plain'} · ${formatFileSize(new TextEncoder().encode(source || '').length)}`;
+          content.textContent = source || '';
+          currentFilePreviewState = {
+            filename,
+            contentType,
+            source,
+            renderable
+          };
+
+          renderTab.classList.toggle('hidden', !renderable);
+          renderTab.disabled = !renderable;
+
+          if (renderable) {
+            sandbox.srcdoc = source || '';
+          } else {
+            sandbox.srcdoc = '';
+          }
+
+          sourceTab.onclick = () => switchFilePreviewMode('source');
+          renderTab.onclick = () => switchFilePreviewMode('render');
+          copyButton.onclick = event => {
+            copyMessageSource(source || '', event.currentTarget);
+          };
+
+          switchFilePreviewMode(renderable ? 'render' : 'source');
+          modal.classList.add('open');
+        }
+
+        function closeFilePreview(event) {
+          if (event && event.target !== event.currentTarget) return;
+          document.getElementById('filePreviewModal').classList.remove('open');
+          document.getElementById('filePreviewSandbox').srcdoc = '';
+          currentFilePreviewState = null;
+        }
+
+        function switchFilePreviewMode(mode) {
+          const sourceTab = document.getElementById('filePreviewSourceTab');
+          const renderTab = document.getElementById('filePreviewRenderTab');
+          const sourceWrap = document.getElementById('filePreviewSourceWrap');
+          const sandboxWrap = document.getElementById('filePreviewSandboxWrap');
+          const renderable = currentFilePreviewState && currentFilePreviewState.renderable;
+          const useRender = mode === 'render' && renderable;
+
+          sourceWrap.classList.toggle('open', !useRender);
+          sandboxWrap.classList.toggle('open', useRender);
+          sourceTab.classList.toggle('bg-gray-900', !useRender);
+          sourceTab.classList.toggle('text-white', !useRender);
+          renderTab.classList.toggle('bg-gray-900', useRender);
+          renderTab.classList.toggle('text-white', useRender);
+        }
+
+        function isHtmlPreviewType(contentType, filename) {
+          const normalizedType = (contentType || '').toLowerCase();
+          const lowerName = (filename || '').toLowerCase();
+          return normalizedType.includes('text/html') || lowerName.endsWith('.html') || lowerName.endsWith('.htm');
+        }
+
+        function handleGlobalKeyDown(event) {
+          if (event.key === 'Escape') {
+            closeFilePreview();
+          }
+        }
+
+        function formatTimestampForFilename(value) {
+          const date = new Date(value);
+          const parts = [
+            date.getFullYear(),
+            String(date.getMonth() + 1).padStart(2, '0'),
+            String(date.getDate()).padStart(2, '0'),
+            String(date.getHours()).padStart(2, '0'),
+            String(date.getMinutes()).padStart(2, '0'),
+            String(date.getSeconds()).padStart(2, '0')
+          ];
+
+          return `${parts[0]}${parts[1]}${parts[2]}-${parts[3]}${parts[4]}${parts[5]}`;
         }
 
         function handleImageSelect(event) {
@@ -896,7 +1270,7 @@ defmodule LanShare.Page do
         async function startFileUpload(upload) {
           upload.inFlight = true;
           upload.retryButton.classList.add('hidden');
-          upload.statusEl.textContent = '正在上传...';
+          upload.statusEl.textContent = upload.pendingText || '正在上传...';
           setFileUploadButtonState(hasInFlightUpload());
 
           const formData = new FormData();

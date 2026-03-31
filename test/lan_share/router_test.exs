@@ -40,6 +40,21 @@ defmodule LanShare.RouterTest do
     assert conn.resp_body =~ "大厅"
   end
 
+  test "GET / renders long text auto-upload helpers" do
+    conn = conn(:get, "/") |> Router.call([])
+
+    assert conn.status == 200
+    assert conn.resp_body =~ "LONG_TEXT_CHAR_THRESHOLD"
+    assert conn.resp_body =~ "HTML_SNIPPET_CHAR_THRESHOLD"
+    assert conn.resp_body =~ "detectLongTextFileKind"
+    assert conn.resp_body =~ "looksLikeHtmlDocument"
+    assert conn.resp_body =~ "openFilePreview"
+    assert conn.resp_body =~ "filePreviewModal"
+    assert conn.resp_body =~ "copyFileMessageSource"
+    assert conn.resp_body =~ "filePreviewSandbox"
+    assert conn.resp_body =~ "switchFilePreviewMode"
+  end
+
   test "GET /r/:code renders room page with normalized code" do
     conn = conn(:get, "/r/ab12") |> Router.call([])
 

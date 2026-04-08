@@ -601,6 +601,10 @@ defmodule LanShare.Page do
               </div>
             `;
 
+            bubble.querySelectorAll('.md-content a').forEach(a => {
+              a.setAttribute('target', '_blank');
+              a.setAttribute('rel', 'noopener');
+            });
             bubble.querySelector('.copy-message').addEventListener('click', event => {
               copyMessageSource(msg.content, event.currentTarget);
             });
@@ -743,9 +747,6 @@ defmodule LanShare.Page do
           document.getElementById('roomInput').value = currentRoomCode || '';
           document.getElementById('showQrButton').classList.toggle('hidden', !currentRoomCode);
           document.getElementById('leaveRoomLink').classList.toggle('hidden', !currentRoomCode);
-          document.getElementById('roomHint').textContent = currentRoomCode
-            ? '当前房间链接可扫码分享，消息与在线设备仅在该房间可见。'
-            : '未加入房间时处于大厅。可输入房间码加入，或直接创建新的私密房间。';
 
           const shareLink = currentRoomCode
             ? `${location.origin}/r/${currentRoomCode}`

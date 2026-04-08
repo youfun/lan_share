@@ -41,6 +41,7 @@ defmodule LanShare.Page do
         html, body {
           margin: 0;
           height: 100%;
+          height: 100dvh;
         }
 
         body {
@@ -86,7 +87,7 @@ defmodule LanShare.Page do
         .gap-3 { gap: 0.75rem; }
         .min-h-0 { min-height: 0; }
         .min-h-64 { min-height: 16rem; }
-        .h-screen { height: 100vh; }
+        .h-screen { height: 100vh; height: 100dvh; }
         .h-10 { height: 2.5rem; }
         .h-2 { height: 0.5rem; }
         .h-64 { height: 16rem; }
@@ -224,6 +225,8 @@ defmodule LanShare.Page do
         [class~="z-[180]"] { z-index: 180; }
         [class~="z-[200]"] { z-index: 200; }
 
+        [class~="placeholder-white/50"]::placeholder { color: rgba(255,255,255,0.5); }
+
         @media (min-width: 640px) {
           [class~="sm:flex-row"] { flex-direction: row; }
           [class~="sm:text-left"] { text-align: left; }
@@ -278,72 +281,64 @@ defmodule LanShare.Page do
     </head>
     <body class="bg-gray-100 h-screen flex flex-col font-sans overflow-hidden">
 
-      <!-- 顶部栏 -->
-      <header class="bg-brand text-white px-4 py-3 flex justify-between items-center shadow-md flex-shrink-0">
-        <h1 class="text-lg font-semibold tracking-wide">LanShare</h1>
-        <button id="deviceCount"
-                onclick="toggleSidebar()"
-                class="bg-white/20 hover:bg-white/30 active:bg-white/10
-                       text-sm px-3 py-1 rounded-full flex items-center gap-1.5 transition-colors">
-          <span id="connDot" class="inline-block w-2 h-2 rounded-full bg-yellow-400"></span>
-          <span id="connLabel">连接中…</span>
-        </button>
-      </header>
-
-      <section class="bg-white border-b border-gray-200 px-4 py-2 flex flex-col gap-2 shadow-sm">
-        <div class="flex items-center justify-between gap-3">
-          <div class="flex-1 min-w-0">
-            <p class="text-[10px] uppercase tracking-[0.2em] text-gray-400 leading-none mb-0.5">当前会话</p>
-            <div class="flex items-baseline gap-2">
-              <p id="roomLabel" class="text-sm font-semibold text-gray-800 truncate">#{assigns.room_label}</p>
-              <div id="joinToggle" class="flex items-center gap-1 cursor-pointer select-none opacity-60 hover:opacity-100 transition-opacity" onclick="toggleJoinSection()">
-                <span class="text-[10px] text-gray-500">加入房间</span>
-                <span id="joinToggleIcon" class="text-[10px] text-gray-400">▶</span>
-              </div>
+      <!-- 统一顶部栏 -->
+      <header class="topbar bg-brand text-white px-3 py-1.5 flex flex-col flex-shrink-0 shadow-md">
+        <div class="flex items-center gap-3">
+          <!-- Logo + 房间信息 -->
+          <h1 class="text-base font-semibold leading-none flex-shrink-0">LanShare</h1>
+          <span class="topbar-sep hidden">·</span>
+          <div class="flex items-center gap-3 min-w-0 flex-1">
+            <span id="roomLabel" class="text-sm text-white/80 truncate">#{assigns.room_label}</span>
+            <div id="joinToggle" class="flex items-center gap-1 cursor-pointer select-none opacity-70 hover:opacity-100 transition-opacity" onclick="toggleJoinSection()">
+              <span class="text-[10px] text-white/80">加入</span>
+              <span id="joinToggleIcon" class="text-[10px] text-white/60">▶</span>
             </div>
           </div>
-
-          <div class="flex items-center gap-1.5 flex-shrink-0">
+          <!-- 按钮组 -->
+          <div class="flex items-center gap-1 flex-shrink-0">
             <button onclick="createRoom()"
-                    class="px-2.5 py-1.5 rounded-full bg-brand text-white text-xs font-medium hover:bg-brand-light transition-colors">
-              创建房间
+                    class="px-2 py-1 rounded-full bg-white/20 hover:bg-white/30 text-xs font-medium transition-colors">
+              新建
             </button>
             <button id="showQrButton"
                     onclick="openQrModal()"
-                    class="px-2.5 py-1.5 rounded-full border border-brand text-brand text-xs font-medium hover:bg-brand/5 transition-colors #{if room_code, do: "", else: "hidden"}">
-              二维码
+                    class="px-2 py-1 rounded-full bg-white/20 hover:bg-white/30 text-xs font-medium transition-colors #{if room_code, do: "", else: "hidden"}">
+              QR
             </button>
             <a id="leaveRoomLink"
                href="/"
-               class="px-2.5 py-1.5 rounded-full border border-gray-300 text-gray-600 text-xs font-medium hover:bg-gray-50 transition-colors #{if room_code, do: "", else: "hidden"}">
+               class="px-2 py-1 rounded-full bg-white/20 hover:bg-white/30 text-xs font-medium transition-colors #{if room_code, do: "", else: "hidden"}">
               大厅
             </a>
+            <button id="deviceCount"
+                    onclick="toggleSidebar()"
+                    class="px-2 py-1 rounded-full bg-white/20 hover:bg-white/30 text-xs flex items-center gap-1 transition-colors">
+              <span id="connDot" class="inline-block w-2 h-2 rounded-full bg-yellow-400"></span>
+              <span id="connLabel">…</span>
+            </button>
           </div>
         </div>
-
-        <div id="joinSection" class="hidden border-t border-gray-50 pt-2 pb-1">
+        <!-- 加入房间展开区 -->
+        <div id="joinSection" class="hidden border-t border-white/20 mt-1.5 pt-1.5 pb-0.5">
           <form action="/join" method="post" class="flex items-center gap-2">
             <input id="roomInput"
                    name="code"
                    type="text"
                    inputmode="latin"
                    maxlength="4"
-                   placeholder="4位"
+                   placeholder="4位房间码"
                    value="#{room_code || ""}"
-                   class="w-24 border border-gray-300 focus:border-brand rounded-xl px-3 py-1.5 text-sm outline-none uppercase tracking-[0.3em] text-center">
+                   class="w-24 border border-white/30 bg-white/10 focus:bg-white/20 rounded-xl px-3 py-1 text-sm outline-none uppercase tracking-[0.3em] text-center text-white placeholder-white/50">
             <button type="submit"
-                    class="px-4 py-1.5 rounded-xl bg-gray-900 text-white text-sm hover:bg-black transition-colors">
+                    class="px-2 py-1 rounded-full bg-white text-brand text-xs font-medium hover:bg-gray-100 transition-colors">
               加入
             </button>
-            <p id="roomHint" class="hidden sm:block text-[10px] text-gray-400 truncate flex-1">
-              #{if room_code, do: "消息僅房間可見。", else: "大厅或输入房间码。"}
+            <p class="text-[10px] text-white/60 truncate flex-1">
+              #{if room_code, do: "消息僅房間可見", else: "输入房间码加入"}
             </p>
           </form>
-          <p id="roomHint" class="sm:hidden text-[10px] text-gray-400 mt-1.5 px-1 truncate">
-            #{if room_code, do: "当前房间消息与在线设备仅在该房间可见。", else: "未加入房间时处于大厅。"}
-          </p>
         </div>
-      </section>
+      </header>
 
       <!-- 设备侧边栏（固定右侧抽屉） -->
       <aside id="sidebar"

@@ -30,6 +30,23 @@ defmodule LanShare.MessageStore do
     GenServer.call(__MODULE__, :reset)
   end
 
+  @doc """
+  根据消息 id 删除某房间内的一条消息。
+
+  返回 `{:ok, message}` 表示删除成功并返回原消息（用于级联清理文件等），
+  返回 `{:error, :not_found}` 表示该房间不存在该 id 的消息。
+  """
+  def delete(room_code, message_id) when is_binary(message_id) do
+    GenServer.call(__MODULE__, {:delete, room_code, message_id})
+  end
+
+  @doc """
+  根据消息 id 查找某房间内的一条消息，未命中返回 `:error`。
+  """
+  def lookup(room_code, message_id) when is_binary(message_id) do
+    GenServer.call(__MODULE__, {:lookup, room_code, message_id})
+  end
+
   # --- 回调 ---
 
   @impl true
@@ -62,6 +79,28 @@ defmodule LanShare.MessageStore do
   def handle_call(:reset, _from, state) do
     :ok = clear_history(state.conn)
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:delete, room_code, message_id}, _from, state) do
+    room_key = storage_room_code(room_code)
+
+    case find_message_row(state.conn, room_key, message_id) do
+      {:ok, db_id, message} ->
+        :ok = delete_message_by_db_id(state.conn, db_id)
+        {:reply, {:ok, message}, state}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:lookup, room_code, message_id}, _from, state) do
+    case find_message_row(state.conn, storage_room_code(room_code), message_id) do
+      {:ok, _db_id, message} -> {:reply, {:ok, message}, state}
+      :error -> {:reply, :error, state}
+    end
   end
 
   @impl true
@@ -160,6 +199,31 @@ defmodule LanShare.MessageStore do
 
   defp clear_history(conn) do
     prepared_step(conn, "DELETE FROM messages", [])
+  end
+
+  defp find_message_row(conn, room_code, message_id) do
+    conn
+    |> prepared_fetch_all(
+      """
+      SELECT id, payload
+      FROM messages
+      WHERE room_code = ?
+      """,
+      [room_code]
+    )
+    |> Enum.find_value(:error, fn [db_id, payload] ->
+      msg = Jason.decode!(payload, keys: :atoms!)
+
+      if Map.get(msg, :id) == message_id do
+        {:ok, db_id, msg}
+      else
+        nil
+      end
+    end)
+  end
+
+  defp delete_message_by_db_id(conn, db_id) do
+    prepared_step(conn, "DELETE FROM messages WHERE id = ?", [db_id])
   end
 
   defp storage_room_code(nil), do: @lobby_room_code

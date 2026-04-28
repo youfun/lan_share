@@ -481,6 +481,7 @@ defmodule LanShare.Page do
       <script>
         let ws;
         let myName = '';
+        let myRoomCreator = null;
         let currentRoomCode = #{Jason.encode!(room_code)};
         let reconnectTimer;
         let shouldStickToBottom = true;
@@ -548,11 +549,17 @@ defmodule LanShare.Page do
           switch (msg.type) {
             case 'welcome':
               myName = msg.device_name || '';
+              myRoomCreator = Object.prototype.hasOwnProperty.call(msg, 'room_creator')
+                ? msg.room_creator
+                : null;
               if (Object.prototype.hasOwnProperty.call(msg, 'room_code')) {
                 currentRoomCode = msg.room_code;
                 syncRoomUi();
               }
               if (msg.devices) updateDeviceList(msg.devices);
+              break;
+            case 'deleted':
+              removeMessageById(msg.id);
               break;
             case 'history':
               msg.messages.forEach(m => renderMessage(m));
@@ -576,10 +583,55 @@ defmodule LanShare.Page do
           }
         }
 
+        function canDeleteMessage(msg) {
+          if (!msg || !msg.id) return false;
+          if (msg.sender === myName) return true;
+          if (myRoomCreator && myName === myRoomCreator) return true;
+          return false;
+        }
+
+        function deleteButtonHtml(msg) {
+          if (!canDeleteMessage(msg)) return '';
+          return `<button type="button"
+                          class="delete-message rounded-full border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-black/5 transition-colors">
+                    删除
+                  </button>`;
+        }
+
+        function attachDeleteHandler(bubble, msg) {
+          const button = bubble.querySelector('.delete-message');
+          if (!button) return;
+          button.addEventListener('click', () => requestDeleteMessage(msg));
+        }
+
+        function requestDeleteMessage(msg) {
+          if (!msg || !msg.id) return;
+          if (!confirm('确定删除这条消息吗？')) return;
+          if (!ws || ws.readyState !== WebSocket.OPEN) {
+            alert('当前未连接，无法删除');
+            return;
+          }
+          ws.send(JSON.stringify({ type: 'delete', id: msg.id }));
+        }
+
+        function removeMessageById(id) {
+          if (!id) return;
+          const node = messagesEl.querySelector(`[data-message-id="${cssEscape(id)}"]`);
+          if (node) node.remove();
+        }
+
+        function cssEscape(value) {
+          if (window.CSS && typeof window.CSS.escape === 'function') {
+            return window.CSS.escape(value);
+          }
+          return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+        }
+
         function renderMessage(msg) {
           const isMine = msg.sender === myName;
           const wrap = document.createElement('div');
           wrap.className = `flex ${isMine ? 'justify-end' : 'justify-start'}`;
+          if (msg.id) wrap.dataset.messageId = msg.id;
 
           const bubble = document.createElement('div');
           bubble.className = [
@@ -597,6 +649,7 @@ defmodule LanShare.Page do
                         class="copy-message rounded-full border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-black/5 transition-colors">
                   复制源码
                 </button>
+                ${deleteButtonHtml(msg)}
                 <span>${formatTime(msg.timestamp)}</span>
               </div>
             `;
@@ -608,14 +661,19 @@ defmodule LanShare.Page do
             bubble.querySelector('.copy-message').addEventListener('click', event => {
               copyMessageSource(msg.content, event.currentTarget);
             });
+            attachDeleteHandler(bubble, msg);
           } else if (msg.type === 'image') {
             bubble.innerHTML = `
               ${!isMine ? `<p class="text-xs font-semibold text-brand mb-1">${escapeHtml(msg.sender)}</p>` : ''}
               <img src="${msg.data}" alt="${escapeHtml(msg.filename)}"
                    onclick="openOverlay(this.src)"
                    class="max-w-full max-h-72 rounded-lg cursor-pointer hover:opacity-90 transition-opacity block">
-              <p class="text-[10px] text-gray-400 text-right mt-1">${formatTime(msg.timestamp)}</p>
+              <div class="mt-1 flex items-center justify-end gap-2 text-[10px] text-gray-400">
+                ${deleteButtonHtml(msg)}
+                <span>${formatTime(msg.timestamp)}</span>
+              </div>
             `;
+            attachDeleteHandler(bubble, msg);
           } else if (msg.type === 'file') {
             const previewable = isPreviewableFileMessage(msg);
             bubble.innerHTML = `
@@ -650,6 +708,7 @@ defmodule LanShare.Page do
                           class="download-file rounded-full border border-gray-300 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-black/5 transition-colors">
                     下载文件
                   </button>
+                  ${deleteButtonHtml(msg)}
                 </div>
               </div>
             `;
@@ -686,6 +745,8 @@ defmodule LanShare.Page do
                 event.currentTarget
               );
             });
+
+            attachDeleteHandler(bubble, msg);
           }
 
           wrap.appendChild(bubble);

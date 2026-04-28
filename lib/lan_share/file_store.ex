@@ -35,6 +35,18 @@ defmodule LanShare.FileStore do
     GenServer.call(__MODULE__, :reset, :infinity)
   end
 
+  @doc """
+  根据房间码与文件 id 删除某个上传文件。
+
+  返回值：
+    * `:ok`               — 删除成功（即便磁盘文件已不存在也按成功处理）
+    * `{:error, :not_found}` — 不存在该 file_id
+    * `{:error, :room_mismatch}` — file_id 存在但所属房间不匹配
+  """
+  def delete(file_id, room_code) when is_binary(file_id) and is_binary(room_code) do
+    GenServer.call(__MODULE__, {:delete, file_id, room_code}, :infinity)
+  end
+
   @impl true
   def init(state) do
     {:ok, ensure_upload_root!(state)}
@@ -73,6 +85,20 @@ defmodule LanShare.FileStore do
     root = upload_root()
     File.rm_rf(root)
     {:reply, :ok, ensure_upload_root!(%{})}
+  end
+
+  def handle_call({:delete, file_id, room_code}, _from, state) do
+    case Map.fetch(state, file_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, %{room_code: ^room_code} = metadata} ->
+        File.rm(metadata.path)
+        {:reply, :ok, Map.delete(state, file_id)}
+
+      {:ok, _other_room_metadata} ->
+        {:reply, {:error, :room_mismatch}, state}
+    end
   end
 
   defp persist_upload(upload, room_code, room_dir, size, state) do

@@ -5,6 +5,7 @@ defmodule LanShare.WebSocket do
   """
   @behaviour :cowboy_websocket
   @max_inline_image_size 5 * 1024 * 1024
+  @lobby_room_code "_LOBBY"
 
   @impl true
   def init(req, _state) do
@@ -28,7 +29,7 @@ defmodule LanShare.WebSocket do
 
   @impl true
   def websocket_init(state) do
-    # 注册到设备列表
+    # 注册到设备列表（注册顺序决定 room_creator）
     LanShare.DeviceRegistry.register(self(), state.device_name, state.room_code)
 
     # 发送历史消息
@@ -41,7 +42,8 @@ defmodule LanShare.WebSocket do
         device_name: state.device_name,
         devices: LanShare.DeviceRegistry.list_devices(state.room_code),
         room_code: state.room_code,
-        room_label: LanShare.Room.label(state.room_code)
+        room_label: LanShare.Room.label(state.room_code),
+        room_creator: LanShare.DeviceRegistry.room_creator(state.room_code)
       })
 
     # 获取当前在线设备并广播
@@ -69,6 +71,7 @@ defmodule LanShare.WebSocket do
           {:ok, state}
         else
           msg = %{
+            id: generate_message_id(),
             type: "text",
             sender: state.device_name,
             content: text,
@@ -85,6 +88,7 @@ defmodule LanShare.WebSocket do
       {:ok, %{"type" => "image", "data" => data, "filename" => filename}} ->
         if valid_inline_image?(data) do
           msg = %{
+            id: generate_message_id(),
             type: "image",
             sender: state.device_name,
             data: data,
@@ -111,6 +115,10 @@ defmodule LanShare.WebSocket do
 
         {:ok, state}
 
+      {:ok, %{"type" => "delete", "id" => message_id}} when is_binary(message_id) ->
+        handle_delete(state, message_id)
+        {:ok, state}
+
       {:ok, %{"type" => "ping"}} ->
         pong = Jason.encode!(%{type: "pong"})
         {[{:text, pong}], state}
@@ -133,6 +141,53 @@ defmodule LanShare.WebSocket do
   @impl true
   def websocket_info(_info, state) do
     {:ok, state}
+  end
+
+  @doc """
+  判断给定 device_name 是否有权删除某条消息。
+  仅消息发送者本人，或当前房间的创建者，可以删除。
+  """
+  def authorized_to_delete?(message, device_name, room_creator) do
+    sender = Map.get(message, :sender) || Map.get(message, "sender")
+    sender == device_name or device_name == room_creator
+  end
+
+  defp handle_delete(state, message_id) do
+    with {:ok, message} <- LanShare.MessageStore.lookup(state.room_code, message_id),
+         room_creator = LanShare.DeviceRegistry.room_creator(state.room_code),
+         true <- authorized_to_delete?(message, state.device_name, room_creator) do
+      cascade_delete_file(message, state.room_code)
+
+      case LanShare.MessageStore.delete(state.room_code, message_id) do
+        {:ok, _msg} ->
+          LanShare.DeviceRegistry.broadcast(state.room_code, %{
+            type: "deleted",
+            id: message_id,
+            room_code: state.room_code
+          })
+
+        {:error, :not_found} ->
+          :ok
+      end
+    else
+      _ -> :ok
+    end
+  end
+
+  defp cascade_delete_file(%{type: "file", id: file_id}, room_code)
+       when is_binary(file_id) do
+    file_room = file_room_code(room_code)
+    LanShare.FileStore.delete(file_id, file_room)
+    :ok
+  end
+
+  defp cascade_delete_file(_message, _room_code), do: :ok
+
+  defp file_room_code(nil), do: @lobby_room_code
+  defp file_room_code(code) when is_binary(code), do: code
+
+  defp generate_message_id do
+    Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)
   end
 
   defp now_iso do
@@ -170,8 +225,8 @@ defmodule LanShare.WebSocket do
       {:ok, metadata} when metadata.room_code == "_LOBBY" ->
         {:ok,
          %{
-           type: "file",
            id: metadata.id,
+           type: "file",
            filename: metadata.filename,
            size: metadata.size,
            content_type: metadata.content_type,
@@ -191,8 +246,8 @@ defmodule LanShare.WebSocket do
       {:ok, metadata} when metadata.room_code == state.room_code ->
         {:ok,
          %{
-           type: "file",
            id: metadata.id,
+           type: "file",
            filename: metadata.filename,
            size: metadata.size,
            content_type: metadata.content_type,

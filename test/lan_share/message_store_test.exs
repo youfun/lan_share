@@ -40,6 +40,68 @@ defmodule LanShare.MessageStoreTest do
     refute Enum.any?(history, &(Map.has_key?(&1, :data) and &1.type == "file"))
   end
 
+  test "delete/2 removes a message by id and leaves others untouched" do
+    room_code = "AB12"
+
+    MessageStore.push(room_code, %{
+      id: "msg-1",
+      type: "text",
+      sender: "Alice",
+      content: "first",
+      room_code: room_code
+    })
+
+    MessageStore.push(room_code, %{
+      id: "msg-2",
+      type: "text",
+      sender: "Bob",
+      content: "second",
+      room_code: room_code
+    })
+
+    assert {:ok, deleted} = MessageStore.delete(room_code, "msg-1")
+    assert deleted.id == "msg-1"
+    assert deleted.sender == "Alice"
+
+    history = MessageStore.get_history(room_code)
+    assert Enum.map(history, & &1.id) == ["msg-2"]
+  end
+
+  test "delete/2 returns :not_found for unknown id" do
+    assert {:error, :not_found} = MessageStore.delete("AB12", "missing")
+  end
+
+  test "lookup/2 returns the stored message by id" do
+    MessageStore.push("AB12", %{
+      id: "look-1",
+      type: "text",
+      sender: "Alice",
+      content: "lookup me",
+      room_code: "AB12"
+    })
+
+    assert {:ok, msg} = MessageStore.lookup("AB12", "look-1")
+    assert msg.sender == "Alice"
+    assert msg.content == "lookup me"
+  end
+
+  test "lookup/2 returns :error for unknown id" do
+    assert :error = MessageStore.lookup("AB12", "no-such-id")
+  end
+
+  test "delete/2 only matches within the requested room" do
+    MessageStore.push("AB12", %{
+      id: "shared-id",
+      type: "text",
+      sender: "Alice",
+      content: "in AB12",
+      room_code: "AB12"
+    })
+
+    assert {:error, :not_found} = MessageStore.delete("CD34", "shared-id")
+    assert [%{id: "shared-id"}] = MessageStore.get_history("AB12")
+  end
+
   test "history survives message store restart when sqlite file is configured" do
     db_path =
       Path.join(

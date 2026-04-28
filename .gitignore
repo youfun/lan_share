@@ -29,3 +29,4 @@ var/*.sqlite3
 var/*.sqlite3-shm
 var/*.sqlite3-wal
 .tmp-*
+LanShare.bat

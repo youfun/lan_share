@@ -31,7 +31,8 @@ defmodule LanShare.Router do
 
   # 主页面
   get "/" do
-    html = LanShare.Page.render(nil)
+    mode = parse_mode_param(conn.params["mode"])
+    html = LanShare.Page.render(nil, mode)
 
     conn
     |> put_resp_content_type("text/html")
@@ -46,7 +47,8 @@ defmodule LanShare.Router do
         |> send_resp(400, "无效房间码")
 
       room_code ->
-        html = LanShare.Page.render(room_code)
+        mode = parse_mode_param(conn.params["mode"])
+        html = LanShare.Page.render(room_code, mode)
 
         conn
         |> put_resp_content_type("text/html")
@@ -79,8 +81,11 @@ defmodule LanShare.Router do
   end
 
   get "/room/new" do
+    mode = parse_mode_param(conn.params["mode"])
+    location = LanShare.Room.path(LanShare.Room.generate()) <> mode_query(mode)
+
     conn
-    |> put_resp_header("location", LanShare.Room.path(LanShare.Room.generate()))
+    |> put_resp_header("location", location)
     |> send_resp(302, "")
   end
 
@@ -92,8 +97,11 @@ defmodule LanShare.Router do
         |> send_resp(400, Jason.encode!(%{error: "房间码必须为 4 位字母或数字"}))
 
       room_code ->
+        mode = parse_mode_param(conn.params["mode"])
+        location = LanShare.Room.path(room_code) <> mode_query(mode)
+
         conn
-        |> put_resp_header("location", LanShare.Room.path(room_code))
+        |> put_resp_header("location", location)
         |> send_resp(302, "")
     end
   end
@@ -193,6 +201,14 @@ defmodule LanShare.Router do
     authority = if default_port?, do: host, else: "#{host}:#{port}"
 
     scheme <> "://" <> authority <> LanShare.Room.path(room_code)
+  end
+
+  defp parse_mode_param(value) do
+    LanShare.Room.normalize_mode(value) || LanShare.Room.default_mode()
+  end
+
+  defp mode_query(mode) do
+    "?mode=" <> Atom.to_string(mode)
   end
 
   defp normalize_room_param("_LOBBY"), do: {:ok, "_LOBBY"}

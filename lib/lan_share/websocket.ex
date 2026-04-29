@@ -1,7 +1,11 @@
 defmodule LanShare.WebSocket do
   @moduledoc """
   Cowboy WebSocket handler。
-  处理实时消息收发、设备上下线通知，并按房间隔离。
+  处理实时消息收发、设备上下线通知,并按房间隔离。
+
+  房间支持两种模式:
+  - `:lan` 本机仅作为信令转发器,文本/图片/文件直接走 WebRTC DataChannel,服务器不存不转
+  - `:relay` 历史行为,所有内容经服务器转发并持久化
   """
   @behaviour :cowboy_websocket
   @max_inline_image_size 5 * 1024 * 1024
@@ -12,7 +16,7 @@ defmodule LanShare.WebSocket do
     # 从请求头提取 User-Agent
     ua = :cowboy_req.header("user-agent", req, "")
     device_name = LanShare.UAParser.parse(ua)
-    room_code = extract_room_code(req)
+    {room_code, mode} = extract_room_and_mode(req)
 
     # 用 peer IP 加设备名去重
     {ip, _port} = :cowboy_req.peer(req)
@@ -21,7 +25,10 @@ defmodule LanShare.WebSocket do
     state = %{
       device_name: format_device_name(device_name, ip_str),
       ip: ip_str,
-      room_code: room_code
+      room_code: room_code,
+      mode_hint: mode,
+      mode: mode,
+      peer_id: nil
     }
 
     {:cowboy_websocket, req, state}
@@ -29,30 +36,50 @@ defmodule LanShare.WebSocket do
 
   @impl true
   def websocket_init(state) do
-    # 注册到设备列表（注册顺序决定 room_creator）
-    LanShare.DeviceRegistry.register(self(), state.device_name, state.room_code)
+    # 注册到设备列表(注册顺序决定 room_creator 与房间模式)
+    {:ok, peer_id, mode} =
+      LanShare.DeviceRegistry.register(
+        self(),
+        state.device_name,
+        state.room_code,
+        state.mode_hint
+      )
 
-    # 发送历史消息
-    history = LanShare.MessageStore.get_history(state.room_code)
+    state = %{state | peer_id: peer_id, mode: mode}
+
+    # 历史消息: 只有中继模式才返回历史
+    history =
+      case mode do
+        :relay -> LanShare.MessageStore.get_history(state.room_code)
+        :lan -> []
+      end
+
     history_msg = Jason.encode!(%{type: "history", messages: history})
 
     welcome_msg =
       Jason.encode!(%{
         type: "welcome",
         device_name: state.device_name,
+        peer_id: peer_id,
+        mode: Atom.to_string(mode),
         devices: LanShare.DeviceRegistry.list_devices(state.room_code),
+        peers: LanShare.DeviceRegistry.list_peers(state.room_code),
         room_code: state.room_code,
         room_label: LanShare.Room.label(state.room_code),
         room_creator: LanShare.DeviceRegistry.room_creator(state.room_code)
       })
 
-    # 获取当前在线设备并广播
+    # 获取当前在线设备并广播 join 事件 (含 peer 信息,供 LAN 模式建立 RTC 连接)
     devices = LanShare.DeviceRegistry.list_devices(state.room_code)
+    peers = LanShare.DeviceRegistry.list_peers(state.room_code)
 
     join_msg = %{
       type: "system",
       content: "#{state.device_name} 已加入",
       devices: devices,
+      peers: peers,
+      peer_id: peer_id,
+      event: "join",
       room_code: state.room_code
     }
 
@@ -64,7 +91,7 @@ defmodule LanShare.WebSocket do
   @impl true
   def websocket_handle({:text, raw}, state) do
     case Jason.decode(raw) do
-      {:ok, %{"type" => "text", "content" => content}} ->
+      {:ok, %{"type" => "text", "content" => content}} when state.mode == :relay ->
         text = content
 
         if String.trim(text) == "" do
@@ -85,7 +112,8 @@ defmodule LanShare.WebSocket do
           {:ok, state}
         end
 
-      {:ok, %{"type" => "image", "data" => data, "filename" => filename}} ->
+      {:ok, %{"type" => "image", "data" => data, "filename" => filename}}
+      when state.mode == :relay ->
         if valid_inline_image?(data) do
           msg = %{
             id: generate_message_id(),
@@ -103,7 +131,7 @@ defmodule LanShare.WebSocket do
 
         {:ok, state}
 
-      {:ok, %{"type" => "file", "id" => file_id}} ->
+      {:ok, %{"type" => "file", "id" => file_id}} when state.mode == :relay ->
         case build_file_message(file_id, state) do
           {:ok, msg} ->
             LanShare.MessageStore.push(state.room_code, msg)
@@ -115,8 +143,13 @@ defmodule LanShare.WebSocket do
 
         {:ok, state}
 
-      {:ok, %{"type" => "delete", "id" => message_id}} when is_binary(message_id) ->
+      {:ok, %{"type" => "delete", "id" => message_id}}
+      when is_binary(message_id) and state.mode == :relay ->
         handle_delete(state, message_id)
+        {:ok, state}
+
+      {:ok, %{"type" => "signal", "to" => target_peer_id} = msg} when is_binary(target_peer_id) ->
+        forward_signal(state, target_peer_id, Map.get(msg, "payload"))
         {:ok, state}
 
       {:ok, %{"type" => "ping"}} ->
@@ -124,6 +157,7 @@ defmodule LanShare.WebSocket do
         {[{:text, pong}], state}
 
       _ ->
+        # LAN 模式下文本/图片/文件被静默忽略,前端应改用 DataChannel
         {:ok, state}
     end
   end
@@ -145,12 +179,28 @@ defmodule LanShare.WebSocket do
 
   @doc """
   判断给定 device_name 是否有权删除某条消息。
-  仅消息发送者本人，或当前房间的创建者，可以删除。
+  仅消息发送者本人,或当前房间的创建者,可以删除。
   """
   def authorized_to_delete?(message, device_name, room_creator) do
     sender = Map.get(message, :sender) || Map.get(message, "sender")
     sender == device_name or device_name == room_creator
   end
+
+  defp forward_signal(state, target_peer_id, payload) when payload != nil do
+    case LanShare.DeviceRegistry.peer_pid(state.room_code, target_peer_id) do
+      nil ->
+        :ok
+
+      pid when is_pid(pid) ->
+        LanShare.DeviceRegistry.send_to(pid, %{
+          type: "signal",
+          from: state.peer_id,
+          payload: payload
+        })
+    end
+  end
+
+  defp forward_signal(_state, _target, _payload), do: :ok
 
   defp handle_delete(state, message_id) do
     with {:ok, message} <- LanShare.MessageStore.lookup(state.room_code, message_id),
@@ -199,13 +249,22 @@ defmodule LanShare.WebSocket do
     "#{device_name} · #{suffix}"
   end
 
-  defp extract_room_code(req) do
-    req
-    |> :cowboy_req.parse_qs()
-    |> Enum.find_value(fn
-      {"room", value} -> LanShare.Room.normalize(value)
-      _ -> nil
-    end)
+  defp extract_room_and_mode(req) do
+    qs = :cowboy_req.parse_qs(req)
+
+    room_code =
+      Enum.find_value(qs, fn
+        {"room", value} -> LanShare.Room.normalize(value)
+        _ -> nil
+      end)
+
+    mode =
+      Enum.find_value(qs, fn
+        {"mode", value} -> LanShare.Room.normalize_mode(value)
+        _ -> nil
+      end) || LanShare.Room.default_mode()
+
+    {room_code, mode}
   end
 
   defp valid_inline_image?("data:image/" <> _rest = data) do

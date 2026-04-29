@@ -43,4 +43,27 @@ defmodule LanShare.Room do
 
   def label(nil), do: "大厅"
   def label(code), do: normalize!(code)
+
+  @doc """
+  房间模式:
+  - `:lan` 仅允许同局域网设备建立 WebRTC DataChannel,VPS 仅做信令转发,不存储/不转发消息内容
+  - `:relay` 历史行为,所有内容经服务器转发并持久化
+  """
+  def default_mode, do: :lan
+
+  def normalize_mode(mode) when mode in [:lan, :relay], do: mode
+
+  def normalize_mode(mode) when is_binary(mode) do
+    case String.downcase(String.trim(mode)) do
+      "lan" -> :lan
+      "relay" -> :relay
+      _ -> nil
+    end
+  end
+
+  def normalize_mode(_), do: nil
+
+  def mode_label(:lan), do: "局域网"
+  def mode_label(:relay), do: "中继"
+  def mode_label(_), do: "局域网"
 end

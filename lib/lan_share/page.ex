@@ -4,10 +4,14 @@ defmodule LanShare.Page do
   包含聊天界面、房间切换、图片发送、在线设备列表。
   """
 
-  def render(room_code \\ nil) do
+  def render(room_code \\ nil, mode \\ nil) do
+    mode = LanShare.Room.normalize_mode(mode) || LanShare.Room.default_mode()
+
     assigns = %{
       room_code: room_code,
-      room_label: LanShare.Room.label(room_code)
+      room_label: LanShare.Room.label(room_code),
+      mode: mode,
+      mode_label: LanShare.Room.mode_label(mode)
     }
 
     """
@@ -289,6 +293,9 @@ defmodule LanShare.Page do
           <span class="topbar-sep hidden">·</span>
           <div class="flex items-center gap-3 min-w-0 flex-1">
             <span id="roomLabel" class="text-sm text-white/80 truncate">#{assigns.room_label}</span>
+            <span id="modeBadge"
+                  title="房间模式"
+                  class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/20 text-white/90 flex-shrink-0">#{assigns.mode_label}</span>
             <div id="joinToggle" class="flex items-center gap-1 cursor-pointer select-none opacity-70 hover:opacity-100 transition-opacity" onclick="toggleJoinSection()">
               <span class="text-[10px] text-white/80">加入</span>
               <span id="joinToggleIcon" class="text-[10px] text-white/60">▶</span>
@@ -296,9 +303,15 @@ defmodule LanShare.Page do
           </div>
           <!-- 按钮组 -->
           <div class="flex items-center gap-1 flex-shrink-0">
-            <button onclick="createRoom()"
+            <button onclick="createRoom('lan')"
+                    title="新建局域网房间(同 LAN 直连)"
                     class="px-2 py-1 rounded-full bg-white/20 hover:bg-white/30 text-xs font-medium transition-colors">
-              新建
+              新建·LAN
+            </button>
+            <button onclick="createRoom('relay')"
+                    title="新建中继房间(经服务器转发)"
+                    class="px-2 py-1 rounded-full bg-white/20 hover:bg-white/30 text-xs font-medium transition-colors">
+              新建·中继
             </button>
             <button id="showQrButton"
                     onclick="openQrModal()"
@@ -481,8 +494,11 @@ defmodule LanShare.Page do
       <script>
         let ws;
         let myName = '';
+        let myPeerId = null;
         let myRoomCreator = null;
         let currentRoomCode = #{Jason.encode!(room_code)};
+        let currentRoomMode = #{Jason.encode!(Atom.to_string(assigns.mode))};
+        const requestedRoomMode = currentRoomMode;
         let reconnectTimer;
         let shouldStickToBottom = true;
         let nextLocalUploadId = 1;
@@ -490,6 +506,15 @@ defmodule LanShare.Page do
         const LONG_TEXT_BYTE_THRESHOLD = 12 * 1024;
         const HTML_SNIPPET_CHAR_THRESHOLD = 1200;
         const LONG_TEXT_FILENAME_PREFIX = 'long-message';
+
+        /* WebRTC mesh state (LAN mode only) */
+        const peers = new Map();
+        // chunked file transfer protocol over RTCDataChannel
+        const DATA_CHANNEL_CHUNK_SIZE = 64 * 1024; // 64 KB per chunk
+        const DATA_CHANNEL_BUFFER_HIGH = 16 * 1024 * 1024; // 16 MB pause threshold
+        const DATA_CHANNEL_BUFFER_LOW = 4 * 1024 * 1024;
+        const incomingFileTransfers = new Map(); // transferId -> { meta, chunks: [] }
+        const seenLanMessageIds = new Set();
 
         const localFileUploads = new Map();
         const previewCache = new Map();
@@ -510,6 +535,7 @@ defmodule LanShare.Page do
           const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
           const wsUrl = new URL(`${proto}//${location.host}/ws`);
           if (currentRoomCode) wsUrl.searchParams.set('room', currentRoomCode);
+          if (requestedRoomMode) wsUrl.searchParams.set('mode', requestedRoomMode);
           ws = new WebSocket(wsUrl);
 
           ws.onopen = () => {
@@ -518,6 +544,7 @@ defmodule LanShare.Page do
           };
           ws.onclose = () => {
             setConnState(false);
+            tearDownAllPeers();
             reconnectTimer = setTimeout(connect, 2000);
           };
           ws.onerror = () => ws.close();
@@ -549,14 +576,27 @@ defmodule LanShare.Page do
           switch (msg.type) {
             case 'welcome':
               myName = msg.device_name || '';
+              myPeerId = msg.peer_id || null;
               myRoomCreator = Object.prototype.hasOwnProperty.call(msg, 'room_creator')
                 ? msg.room_creator
                 : null;
+              if (msg.mode) {
+                currentRoomMode = msg.mode;
+                syncModeBadge();
+              }
               if (Object.prototype.hasOwnProperty.call(msg, 'room_code')) {
                 currentRoomCode = msg.room_code;
                 syncRoomUi();
               }
               if (msg.devices) updateDeviceList(msg.devices);
+              if (currentRoomMode === 'lan' && Array.isArray(msg.peers)) {
+                // initiator side: connect to all existing peers
+                msg.peers.forEach(peer => {
+                  if (peer.id && peer.id !== myPeerId) {
+                    ensurePeerConnection(peer.id, peer.name, true);
+                  }
+                });
+              }
               break;
             case 'deleted':
               removeMessageById(msg.id);
@@ -575,11 +615,32 @@ defmodule LanShare.Page do
               renderMessage(msg);
               scrollToBottom();
               break;
+            case 'signal':
+              handleSignal(msg.from, msg.payload);
+              break;
             case 'system':
               renderSystem(msg.content);
               if (msg.devices) updateDeviceList(msg.devices);
+              if (currentRoomMode === 'lan') {
+                handleLanPresenceSystemMsg(msg);
+              }
               scrollToBottom();
               break;
+          }
+        }
+
+        function handleLanPresenceSystemMsg(msg) {
+          if (msg.event === 'leave' && msg.peer_id) {
+            tearDownPeer(msg.peer_id);
+            return;
+          }
+
+          if (msg.event === 'join' && msg.peer_id && msg.peer_id !== myPeerId) {
+            // Existing peers wait for the newcomer's offer (passive side)
+            const peerName = Array.isArray(msg.peers)
+              ? (msg.peers.find(p => p.id === msg.peer_id) || {}).name
+              : null;
+            ensurePeerConnection(msg.peer_id, peerName || msg.peer_id, false);
           }
         }
 
@@ -607,6 +668,14 @@ defmodule LanShare.Page do
         function requestDeleteMessage(msg) {
           if (!msg || !msg.id) return;
           if (!confirm('确定删除这条消息吗？')) return;
+
+          if (currentRoomMode === 'lan') {
+            // 局域网模式: 本地直接移除并通知所有 peer
+            removeMessageById(msg.id);
+            broadcastToLanPeers(JSON.stringify({ kind: 'delete', id: msg.id }));
+            return;
+          }
+
           if (!ws || ws.readyState !== WebSocket.OPEN) {
             alert('当前未连接，无法删除');
             return;
@@ -816,8 +885,22 @@ defmodule LanShare.Page do
           document.getElementById('shareLink').value = shareLink;
         }
 
-        function createRoom() {
-          location.href = '/room/new';
+        function createRoom(mode) {
+          const m = mode === 'relay' ? 'relay' : 'lan';
+          location.href = `/room/new?mode=${m}`;
+        }
+
+        function syncModeBadge() {
+          const badge = document.getElementById('modeBadge');
+          if (!badge) return;
+
+          if (currentRoomMode === 'relay') {
+            badge.textContent = '中继';
+            badge.title = '中继模式 · 消息和文件经服务器转发并持久化';
+          } else {
+            badge.textContent = '局域网';
+            badge.title = '局域网模式 · 仅同 LAN 设备直连(WebRTC),服务器不转发不存储';
+          }
         }
 
         function openQrModal() {
@@ -951,12 +1034,447 @@ defmodule LanShare.Page do
           }
         }
 
+        /* ── WebRTC 局域网直连 ── */
+        // 仅采集 host 类型的 ICE 候选,且只接受私有/链路本地/mDNS 主机名,
+        // 这样跨网设备(只有公网/srflx 候选)无法建立连接 → "局域网" 物理隔离。
+        function isLanCandidate(candidateString) {
+          if (!candidateString) return false;
+          // candidate:foundation component protocol priority address port typ host ...
+          const parts = candidateString.split(/\s+/);
+          const typIdx = parts.indexOf('typ');
+          if (typIdx === -1 || parts[typIdx + 1] !== 'host') return false;
+
+          const address = parts[4] || '';
+          if (!address) return false;
+
+          // mDNS 主机名 (浏览器 ICE 隐私默认),只有同 LAN 才能解析
+          if (address.endsWith('.local')) return true;
+          // RFC1918 私有段 + 链路本地
+          if (/^10\./.test(address)) return true;
+          if (/^192\.168\./.test(address)) return true;
+          if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(address)) return true;
+          if (/^169\.254\./.test(address)) return true;
+          // IPv6 链路本地
+          if (/^fe80:/i.test(address)) return true;
+          // IPv6 unique local
+          if (/^f[cd][0-9a-f]{2}:/i.test(address)) return true;
+          return false;
+        }
+
+        function ensurePeerConnection(peerId, peerName, isInitiator) {
+          if (!peerId || peerId === myPeerId) return null;
+          let entry = peers.get(peerId);
+          if (entry) return entry;
+
+          const pc = new RTCPeerConnection({
+            iceServers: [], // LAN 模式不配置 STUN/TURN
+            iceTransportPolicy: 'all'
+          });
+
+          entry = {
+            peerId,
+            name: peerName || peerId,
+            pc,
+            channel: null,
+            ready: false,
+            sendQueue: [],
+            inFlightFile: null
+          };
+          peers.set(peerId, entry);
+
+          pc.onicecandidate = event => {
+            if (!event.candidate) return;
+            // LAN 网关:过滤掉非 host 候选
+            if (!isLanCandidate(event.candidate.candidate)) {
+              return;
+            }
+            sendSignal(peerId, { kind: 'ice', candidate: event.candidate.toJSON() });
+          };
+
+          pc.onconnectionstatechange = () => {
+            if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+              tearDownPeer(peerId);
+            }
+          };
+
+          pc.ondatachannel = event => {
+            attachDataChannel(entry, event.channel);
+          };
+
+          if (isInitiator) {
+            const channel = pc.createDataChannel('lan', { ordered: true });
+            attachDataChannel(entry, channel);
+            void negotiateOffer(entry);
+          }
+
+          return entry;
+        }
+
+        async function negotiateOffer(entry) {
+          try {
+            const offer = await entry.pc.createOffer();
+            await entry.pc.setLocalDescription(offer);
+            sendSignal(entry.peerId, { kind: 'sdp', sdp: entry.pc.localDescription });
+          } catch (error) {
+            console.warn('[lan] offer failed', error);
+          }
+        }
+
+        function attachDataChannel(entry, channel) {
+          entry.channel = channel;
+          channel.binaryType = 'arraybuffer';
+          channel.bufferedAmountLowThreshold = DATA_CHANNEL_BUFFER_LOW;
+
+          channel.onopen = () => {
+            entry.ready = true;
+            renderSystem(`已与 ${entry.name} 建立直连`);
+            flushPeerSendQueue(entry);
+          };
+
+          channel.onclose = () => {
+            entry.ready = false;
+          };
+
+          channel.onmessage = event => handleDataChannelMessage(entry, event.data);
+        }
+
+        function flushPeerSendQueue(entry) {
+          while (entry.ready && entry.sendQueue.length > 0) {
+            const payload = entry.sendQueue.shift();
+            try {
+              entry.channel.send(payload);
+            } catch (error) {
+              console.warn('[lan] send failed', error);
+              entry.sendQueue.unshift(payload);
+              break;
+            }
+          }
+        }
+
+        function sendOnChannel(entry, payload) {
+          if (entry.ready && entry.channel && entry.channel.readyState === 'open') {
+            try {
+              entry.channel.send(payload);
+              return true;
+            } catch (error) {
+              console.warn('[lan] send error', error);
+              entry.sendQueue.push(payload);
+              return false;
+            }
+          }
+          entry.sendQueue.push(payload);
+          return false;
+        }
+
+        function broadcastToLanPeers(payload) {
+          for (const entry of peers.values()) {
+            sendOnChannel(entry, payload);
+          }
+        }
+
+        async function handleSignal(fromPeerId, payload) {
+          if (!fromPeerId || !payload) return;
+          if (currentRoomMode !== 'lan') return;
+
+          let entry = peers.get(fromPeerId);
+          if (!entry) {
+            entry = ensurePeerConnection(fromPeerId, fromPeerId, false);
+            if (!entry) return;
+          }
+
+          try {
+            if (payload.kind === 'sdp' && payload.sdp) {
+              await entry.pc.setRemoteDescription(payload.sdp);
+              if (payload.sdp.type === 'offer') {
+                const answer = await entry.pc.createAnswer();
+                await entry.pc.setLocalDescription(answer);
+                sendSignal(fromPeerId, { kind: 'sdp', sdp: entry.pc.localDescription });
+              }
+            } else if (payload.kind === 'ice' && payload.candidate) {
+              // 接收端也只接受 host 候选,双保险
+              if (!isLanCandidate(payload.candidate.candidate)) return;
+              await entry.pc.addIceCandidate(payload.candidate);
+            }
+          } catch (error) {
+            console.warn('[lan] signal handling failed', error);
+          }
+        }
+
+        function sendSignal(targetPeerId, payload) {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          ws.send(JSON.stringify({ type: 'signal', to: targetPeerId, payload }));
+        }
+
+        function tearDownPeer(peerId) {
+          const entry = peers.get(peerId);
+          if (!entry) return;
+          try { entry.channel && entry.channel.close(); } catch (_) {}
+          try { entry.pc && entry.pc.close(); } catch (_) {}
+          peers.delete(peerId);
+        }
+
+        function tearDownAllPeers() {
+          for (const peerId of Array.from(peers.keys())) {
+            tearDownPeer(peerId);
+          }
+          incomingFileTransfers.clear();
+        }
+
+        /* ── 局域网消息发送 ── */
+        function lanMessageId() {
+          return 'lan-' + Date.now().toString(16) + '-' + Math.random().toString(16).slice(2, 10);
+        }
+
+        function sendTextViaDataChannel(text) {
+          const msg = {
+            id: lanMessageId(),
+            type: 'text',
+            sender: myName,
+            content: text,
+            content_html: null,
+            timestamp: new Date().toISOString(),
+            room_code: currentRoomCode
+          };
+          seenLanMessageIds.add(msg.id);
+          renderMessage(msg);
+          scrollToBottom();
+          broadcastToLanPeers(JSON.stringify({ kind: 'message', message: msg }));
+        }
+
+        function sendImageViaDataChannel(dataUrl, filename) {
+          const msg = {
+            id: lanMessageId(),
+            type: 'image',
+            sender: myName,
+            data: dataUrl,
+            filename,
+            timestamp: new Date().toISOString(),
+            room_code: currentRoomCode
+          };
+          seenLanMessageIds.add(msg.id);
+          renderMessage(msg);
+          scrollToBottom();
+          broadcastToLanPeers(JSON.stringify({ kind: 'message', message: msg }));
+        }
+
+        async function sendFileViaDataChannel(file) {
+          if (peers.size === 0) {
+            alert('当前没有可用的局域网设备,无法发送');
+            return;
+          }
+          const transferId = lanMessageId();
+          const upload = createLocalFileUpload(file, {
+            pendingText: '正在向局域网设备发送...'
+          });
+
+          const meta = {
+            kind: 'file-meta',
+            transferId,
+            id: transferId,
+            filename: file.name || 'file',
+            size: file.size,
+            content_type: file.type || 'application/octet-stream',
+            sender: myName,
+            timestamp: new Date().toISOString(),
+            chunkSize: DATA_CHANNEL_CHUNK_SIZE
+          };
+
+          // pre-announce to all peers
+          broadcastToLanPeers(JSON.stringify(meta));
+
+          try {
+            await streamFileToPeers(file, transferId, upload);
+            // local self-render: 自己也保留一个 blob 链接,可以下载/预览自己刚发出去的文件
+            const localUrl = URL.createObjectURL(file);
+            const msg = {
+              id: transferId,
+              type: 'file',
+              sender: myName,
+              filename: meta.filename,
+              size: meta.size,
+              content_type: meta.content_type,
+              download_url: localUrl,
+              local_blob_url: localUrl,
+              timestamp: meta.timestamp,
+              room_code: currentRoomCode
+            };
+            seenLanMessageIds.add(transferId);
+            upload.el.remove();
+            localFileUploads.delete(upload.id);
+            renderMessage(msg);
+            scrollToBottom();
+          } catch (error) {
+            markFileUploadFailed(upload, error.message || '发送失败');
+          }
+        }
+
+        async function streamFileToPeers(file, transferId, upload) {
+          const total = file.size;
+          let offset = 0;
+          let seq = 0;
+          const reader = new FileReader();
+
+          while (offset < total) {
+            const slice = file.slice(offset, Math.min(offset + DATA_CHANNEL_CHUNK_SIZE, total));
+            const buf = await new Promise((resolve, reject) => {
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = () => reject(reader.error || new Error('读取失败'));
+              reader.readAsArrayBuffer(slice);
+            });
+
+            // header: 8-byte magic "LSC0" + 4-byte transferIdLen + transferId + 4-byte seq + payload
+            const transferIdBytes = new TextEncoder().encode(transferId);
+            const header = new ArrayBuffer(4 + 4 + transferIdBytes.length + 4);
+            const view = new DataView(header);
+            // magic 'LSC0'
+            view.setUint8(0, 76); view.setUint8(1, 83); view.setUint8(2, 67); view.setUint8(3, 48);
+            view.setUint32(4, transferIdBytes.length, false);
+            new Uint8Array(header, 8, transferIdBytes.length).set(transferIdBytes);
+            view.setUint32(8 + transferIdBytes.length, seq, false);
+
+            const frame = new Uint8Array(header.byteLength + buf.byteLength);
+            frame.set(new Uint8Array(header), 0);
+            frame.set(new Uint8Array(buf), header.byteLength);
+
+            for (const entry of peers.values()) {
+              await waitForBufferDrain(entry);
+              sendOnChannel(entry, frame.buffer);
+            }
+
+            offset += buf.byteLength;
+            seq += 1;
+            const percent = Math.floor((offset / total) * 100);
+            upload.statusEl.textContent = `直连发送中 ${percent}%`;
+          }
+
+          broadcastToLanPeers(JSON.stringify({ kind: 'file-end', transferId }));
+        }
+
+        function waitForBufferDrain(entry) {
+          if (!entry.ready || !entry.channel) return Promise.resolve();
+          if (entry.channel.bufferedAmount < DATA_CHANNEL_BUFFER_HIGH) return Promise.resolve();
+          return new Promise(resolve => {
+            const handler = () => {
+              entry.channel.removeEventListener('bufferedamountlow', handler);
+              resolve();
+            };
+            entry.channel.addEventListener('bufferedamountlow', handler);
+          });
+        }
+
+        /* ── 局域网消息接收 ── */
+        function handleDataChannelMessage(entry, data) {
+          if (typeof data === 'string') {
+            let parsed;
+            try { parsed = JSON.parse(data); } catch (_) { return; }
+            handleLanControlMessage(entry, parsed);
+            return;
+          }
+
+          // binary chunk
+          handleLanFileChunk(data);
+        }
+
+        function handleLanControlMessage(entry, msg) {
+          if (!msg || !msg.kind) return;
+
+          switch (msg.kind) {
+            case 'message': {
+              const message = msg.message;
+              if (!message || !message.id || seenLanMessageIds.has(message.id)) return;
+              seenLanMessageIds.add(message.id);
+              renderMessage(message);
+              scrollToBottom();
+              break;
+            }
+            case 'file-meta': {
+              if (!msg.transferId || incomingFileTransfers.has(msg.transferId)) return;
+              incomingFileTransfers.set(msg.transferId, {
+                meta: msg,
+                received: 0,
+                chunks: []
+              });
+              break;
+            }
+            case 'file-end': {
+              finishIncomingTransfer(msg.transferId);
+              break;
+            }
+            case 'delete': {
+              if (msg.id) removeMessageById(msg.id);
+              break;
+            }
+            default:
+              break;
+          }
+        }
+
+        function handleLanFileChunk(data) {
+          // parse header
+          const view = new DataView(data);
+          if (view.byteLength < 12) return;
+          if (view.getUint8(0) !== 76 || view.getUint8(1) !== 83 ||
+              view.getUint8(2) !== 67 || view.getUint8(3) !== 48) return;
+
+          const idLen = view.getUint32(4, false);
+          if (view.byteLength < 8 + idLen + 4) return;
+
+          const transferId = new TextDecoder().decode(new Uint8Array(data, 8, idLen));
+          const payloadStart = 8 + idLen + 4;
+          const payload = data.slice(payloadStart);
+
+          const transfer = incomingFileTransfers.get(transferId);
+          if (!transfer) return;
+
+          transfer.chunks.push(payload);
+          transfer.received += payload.byteLength;
+        }
+
+        function finishIncomingTransfer(transferId) {
+          const transfer = incomingFileTransfers.get(transferId);
+          if (!transfer) return;
+          incomingFileTransfers.delete(transferId);
+
+          const meta = transfer.meta;
+          const blob = new Blob(transfer.chunks, { type: meta.content_type || 'application/octet-stream' });
+          const url = URL.createObjectURL(blob);
+
+          const msg = {
+            id: transferId,
+            type: 'file',
+            sender: meta.sender,
+            filename: meta.filename,
+            size: meta.size,
+            content_type: meta.content_type,
+            download_url: url,
+            local_blob_url: url,
+            timestamp: meta.timestamp,
+            room_code: currentRoomCode
+          };
+          seenLanMessageIds.add(transferId);
+          renderMessage(msg);
+          scrollToBottom();
+        }
+
         /* ── 发送 ── */
         function sendText() {
           const input = document.getElementById('textInput');
           const text = input.value;
           // 不 trim，保留用户的首尾空白；但全空白不发
-          if (!text.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
+          if (!text.trim()) return;
+
+          if (currentRoomMode === 'lan') {
+            if (peers.size === 0) {
+              alert('当前没有可用的局域网设备,无法发送');
+              return;
+            }
+            sendTextViaDataChannel(text);
+            input.value = '';
+            input.style.height = 'auto';
+            return;
+          }
+
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
           if (shouldSendTextAsFile(text)) {
             void sendLongTextAsFile(text, input);
@@ -1240,9 +1758,19 @@ defmodule LanShare.Page do
           }
 
           const dataUrl = await readFileAsDataUrl(file);
+          const filename = file.name || 'image';
+
+          if (currentRoomMode === 'lan') {
+            if (peers.size === 0) {
+              alert('当前没有可用的局域网设备,无法发送');
+              return;
+            }
+            sendImageViaDataChannel(dataUrl, filename);
+            return;
+          }
 
           if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'image', data: dataUrl, filename: file.name || 'image' }));
+            ws.send(JSON.stringify({ type: 'image', data: dataUrl, filename }));
           }
         }
 
@@ -1317,6 +1845,11 @@ defmodule LanShare.Page do
           }
 
           if (findInFlightUpload(file)) {
+            return;
+          }
+
+          if (currentRoomMode === 'lan') {
+            await sendFileViaDataChannel(file);
             return;
           }
 
@@ -1521,6 +2054,7 @@ defmodule LanShare.Page do
         };
 
         syncRoomUi();
+        syncModeBadge();
         connect();
       </script>
     </body>

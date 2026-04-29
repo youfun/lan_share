@@ -36,7 +36,7 @@ defmodule LanShare.RouterTest do
     conn = conn(:get, "/") |> Router.call([])
 
     assert conn.status == 200
-    assert conn.resp_body =~ "当前会话"
+    assert conn.resp_body =~ "LanShare"
     assert conn.resp_body =~ "大厅"
   end
 
@@ -55,12 +55,40 @@ defmodule LanShare.RouterTest do
     assert conn.resp_body =~ "switchFilePreviewMode"
   end
 
+  test "GET / embeds the LAN mode WebRTC scaffolding" do
+    conn = conn(:get, "/") |> Router.call([])
+
+    assert conn.status == 200
+    # WebRTC mesh entry points
+    assert conn.resp_body =~ "ensurePeerConnection"
+    assert conn.resp_body =~ "handleSignal"
+    assert conn.resp_body =~ "RTCPeerConnection"
+    assert conn.resp_body =~ "RTCDataChannel"
+    # Host-only ICE gating ensures non-LAN peers cannot connect
+    assert conn.resp_body =~ "isLanCandidate"
+    # Mode awareness
+    assert conn.resp_body =~ "currentRoomMode"
+    assert conn.resp_body =~ "modeBadge"
+    # Chunked file transfer
+    assert conn.resp_body =~ "DATA_CHANNEL_CHUNK_SIZE"
+    assert conn.resp_body =~ "sendFileViaDataChannel"
+  end
+
+  test "GET /r/:code includes the room mode hint in the welcome script" do
+    conn = conn(:get, "/r/ab12?mode=relay") |> Router.call([])
+
+    assert conn.status == 200
+    assert conn.resp_body =~ "AB12"
+    # Server-rendered mode hint that frontend feeds to /ws
+    assert conn.resp_body =~ ~s|"relay"|
+  end
+
   test "GET /r/:code renders room page with normalized code" do
     conn = conn(:get, "/r/ab12") |> Router.call([])
 
     assert conn.status == 200
     assert conn.resp_body =~ "AB12"
-    assert conn.resp_body =~ "当前房间链接可扫码分享"
+    assert conn.resp_body =~ "消息僅房間可見"
   end
 
   test "GET /r/:code rejects invalid room code" do
@@ -78,11 +106,11 @@ defmodule LanShare.RouterTest do
     assert conn.resp_body =~ "<svg"
   end
 
-  test "POST /join redirects to normalized room path" do
+  test "POST /join redirects to normalized room path with default LAN mode" do
     conn = conn(:post, "/join", %{code: "x9y2"}) |> Router.call([])
 
     assert conn.status == 302
-    assert get_resp_header(conn, "location") == ["/r/X9Y2"]
+    assert get_resp_header(conn, "location") == ["/r/X9Y2?mode=lan"]
   end
 
   test "POST /join rejects malformed room code" do
@@ -92,12 +120,35 @@ defmodule LanShare.RouterTest do
     assert conn.resp_body =~ "房间码必须为 4 位字母或数字"
   end
 
-  test "GET /room/new redirects to a valid room path" do
+  test "GET /room/new redirects to a valid LAN-mode room path by default" do
     conn = conn(:get, "/room/new") |> Router.call([])
     [location] = get_resp_header(conn, "location")
 
     assert conn.status == 302
-    assert location =~ ~r|^/r/[A-Z0-9]{4}$|
+    assert location =~ ~r|^/r/[A-Z0-9]{4}\?mode=lan$|
+  end
+
+  test "GET /room/new?mode=relay redirects with relay mode in query" do
+    conn = conn(:get, "/room/new?mode=relay") |> Router.call([])
+    [location] = get_resp_header(conn, "location")
+
+    assert conn.status == 302
+    assert location =~ ~r|^/r/[A-Z0-9]{4}\?mode=relay$|
+  end
+
+  test "GET /room/new?mode=garbage falls back to LAN mode" do
+    conn = conn(:get, "/room/new?mode=garbage") |> Router.call([])
+    [location] = get_resp_header(conn, "location")
+
+    assert conn.status == 302
+    assert location =~ ~r|\?mode=lan$|
+  end
+
+  test "POST /join carries mode through to the redirect target" do
+    conn = conn(:post, "/join", %{code: "x9y2", mode: "relay"}) |> Router.call([])
+
+    assert conn.status == 302
+    assert get_resp_header(conn, "location") == ["/r/X9Y2?mode=relay"]
   end
 
   test "POST /upload/file stores a room-scoped file and returns metadata" do

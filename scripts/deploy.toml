@@ -1,0 +1,53 @@
+# scripts/deploy.toml — LanShare 部署配置(类似 fly.toml,只改这里)
+#
+# 用法:
+#   elixir scripts/deploy.exs                       # 完整部署
+#   elixir scripts/deploy.exs --rollback            # 回滚到上一版本
+#   elixir scripts/deploy.exs --config <path.toml>  # 指定配置文件
+#
+# 首次部署前(可选):cp .env.prod.example .env.prod 并填入真实值
+#
+# 重要:
+#   - mix release 会绑定 BEAM/exqlite NIF 到构建机的 OS+架构,
+#     必须在与目标机器相同的 OS+架构 下构建(Linux x86_64 → Linux x86_64)。
+#   - var/ 目录(SQLite + 上传文件)永久保留,部署不会清理。
+#   - 历史版本仅保留 1 个(${DEPLOY_DIR}/previous/),--rollback 仅可回退一次。
+
+# ── 部署目标 ─────────────────────────────────────────────────────────────────
+[deploy]
+target = "ssh"            # "ssh" | "gcloud"
+
+# ── SSH 目标(target = "ssh")────────────────────────────────────────────────
+[ssh]
+host = "1.2.3.4"
+port = 22
+user = "ubuntu"
+key  = ""                 # 留空使用默认 SSH key(~/.ssh/id_rsa)
+
+# ── GCloud 目标(target = "gcloud")─────────────────────────────────────────
+[gcloud]
+project  = "your-project-id"
+zone     = "asia-east2-c"
+instance = "your-instance-name"
+
+# ── 应用 ─────────────────────────────────────────────────────────────────────
+[app]
+name       = "lan_share"
+release    = "lan_share"          # mix release 名(通常等于 app 名)
+deploy_dir = "/opt/lan_share"     # 远端解压路径
+env_file   = ".env.prod"          # 本地 env 文件(相对项目根),可不存在
+
+[systemd]
+service = "lan_share.service"
+
+# ── Caddy 反向代理(可选,启用即自动签发 Let's Encrypt TLS)──────────────────
+# WebRTC 在公网下需要 secure context(https + wss),否则浏览器会拒绝某些 API。
+# 关闭则只暴露 http://<vm-ip>:<PORT>,仅适合内网/调试。
+#
+# 安装方式:原生 apt(从 cloudsmith 官方 Caddy 源),由 systemd 直接管理。
+# 仅支持 Debian / Ubuntu(apt 系)。其他发行版请自行替换包管理器命令。
+[caddy]
+enabled  = true
+domain   = "lanshare.example.com"
+email    = "admin@example.com"    # Let's Encrypt 注册邮箱(可留空)
+upstream_port = 10086             # LanShare 监听端口,需与 .env.prod 中 PORT 一致

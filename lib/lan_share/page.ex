@@ -5,7 +5,7 @@ defmodule LanShare.Page do
   """
 
   def render(room_code \\ nil, mode \\ nil) do
-    mode = LanShare.Room.normalize_mode(mode) || LanShare.Room.default_mode()
+    mode = LanShare.Room.normalize_mode(mode) || if(room_code, do: LanShare.Room.default_mode(), else: :relay)
 
     assigns = %{
       room_code: room_code,

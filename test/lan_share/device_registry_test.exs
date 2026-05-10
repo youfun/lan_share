@@ -82,6 +82,26 @@ defmodule LanShare.DeviceRegistryTest do
     test "room_mode returns :lan for unknown rooms" do
       assert DeviceRegistry.room_mode("ZZ99") == :lan
     end
+
+    test "lobby (room_code nil) is always :relay regardless of requested mode" do
+      pid1 = spawn_idle()
+      {:ok, _peer1, mode1} = DeviceRegistry.register(pid1, "Alice", nil, :lan)
+
+      assert mode1 == :relay
+      assert DeviceRegistry.room_mode(nil) == :relay
+
+      pid2 = spawn_idle()
+      {:ok, _peer2, mode2} = DeviceRegistry.register(pid2, "Bob", nil, :relay)
+      assert mode2 == :relay
+    end
+
+    test "lobby stays :relay even when first registered without explicit mode" do
+      pid = spawn_idle()
+      {:ok, _peer, mode} = DeviceRegistry.register(pid, "Alice", nil)
+
+      assert mode == :relay
+      assert DeviceRegistry.room_mode(nil) == :relay
+    end
   end
 
   describe "peer ids" do

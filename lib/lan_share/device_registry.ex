@@ -21,9 +21,11 @@ defmodule LanShare.DeviceRegistry do
 
   @doc """
   注册设备。第一位进入房间时,`mode` 决定房间模式;后续设备的 `mode` 参数被忽略。
+  大厅 (room_code 为 nil) 始终使用 `:relay` 模式,以保证消息公共服务可见。
   返回 `{:ok, peer_id, mode}`,其中 `peer_id` 是本次连接的稳定 ID,`mode` 是房间最终模式。
   """
   def register(pid, device_name, room_code, mode \\ @default_mode) do
+    mode = if is_nil(room_code), do: :relay, else: mode
     GenServer.call(__MODULE__, {:register, pid, device_name, room_code, mode})
   end
 
